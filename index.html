@@ -101,6 +101,19 @@
     box-shadow:0 0 12px var(--sp); transition:width .25s linear; }
   .times { display:flex; justify-content:space-between; font-size:10.5px; color:#7c7196;
     margin-top:5px; font-variant-numeric:tabular-nums; letter-spacing:.06em; }
+
+  #status { position:fixed; left:50%; transform:translateX(-50%); top:22px; z-index:14;
+    display:flex; align-items:center; gap:9px; padding:8px 16px; border-radius:999px;
+    background:rgba(9,7,18,.7); backdrop-filter:blur(14px);
+    border:1px solid rgba(255,255,255,.14); font-size:11.5px; font-weight:800;
+    letter-spacing:.14em; text-transform:uppercase; color:#cfe9d8; white-space:nowrap;
+    transition:top .45s cubic-bezier(.2,.9,.25,1), opacity .4s ease; opacity:0; pointer-events:none; }
+  #status.on { opacity:1; }
+  body.np-on #status { top:172px; }
+  #status .sdot { width:8px; height:8px; border-radius:50%; background:#1DB954;
+    box-shadow:0 0 10px #1DB954; }
+  #status.warn { color:#ffd79a; border-color:rgba(255,180,0,.4); }
+  #status.warn .sdot { background:#ffb02e; box-shadow:0 0 10px #ffb02e; }
   .eq { display:flex; align-items:flex-end; gap:4px; height:56px; flex:none; padding-left:6px; }
   .eq i { width:6px; height:6px; border-radius:3px; background:var(--sp); opacity:.9; box-shadow:0 0 10px var(--sp); }
 </style>
@@ -156,6 +169,31 @@
       <button class="ghost" id="closeSetup">back</button>
       <button class="ghost" id="forget">forget this device</button>
     </div>
+  </div>
+</div>
+
+<div id="status"><span class="sdot"></span><span id="statusText">—</span></div>
+
+<div class="overlay gone" id="share">
+  <div class="card">
+    <h2>Let it hear the music — no microphone</h2>
+    <p class="lead">Chrome can hand this page the sound your computer is already playing. The only
+      way browsers allow that is through the screen-share picker, so it looks like you're sharing a
+      screen — but the picture is thrown away the instant it arrives. Only the sound is used, and it
+      never leaves this page.</p>
+    <ol>
+      <li>Press <b>Choose what to share</b> below — Chrome's picker opens.</li>
+      <li>Spotify in a <b>browser tab</b> → pick <b>Chrome Tab</b>, click your Spotify tab, and switch
+        on <b>Also share tab audio</b> (bottom-left of the picker).</li>
+      <li>Spotify as the <b>desktop app</b> → pick <b>Entire Screen</b>, then switch on
+        <b>Also share system audio</b>.</li>
+      <li>Press <b>Share</b>. If the toggle was off there'll be no sound — just try again.</li>
+    </ol>
+    <div class="row" style="justify-content:flex-start">
+      <button class="mini go" id="shareGo" style="padding:15px 26px;font-size:14px">CHOOSE WHAT TO SHARE</button>
+      <button class="ghost" id="shareCancel">back</button>
+    </div>
+    <div id="shareMsg"></div>
   </div>
 </div>
 
@@ -440,6 +478,86 @@ function drawSign(sg) {
   ctx.restore();
 }
 
+/* ── props the scenes are built from ─────────────────────────────────── */
+
+function icicle(x, y, w, len, col) {
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(x - w, y); ctx.lineTo(x + w, y);
+  ctx.quadraticCurveTo(x + w * 0.3, y + len * 0.7, x, y + len);
+  ctx.quadraticCurveTo(x - w * 0.3, y + len * 0.7, x - w, y);
+  ctx.closePath(); ctx.fill();
+}
+
+/* a small side-on pistol, used as the falling data points on the crime graph */
+function pistol(x, y, s, col, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = col;
+  ctx.translate(x, y); ctx.scale(s, s);
+  ctx.beginPath();
+  ctx.moveTo(-13, -4); ctx.lineTo(9, -4); ctx.lineTo(9, 1); ctx.lineTo(1, 1);
+  ctx.lineTo(1, 3); ctx.lineTo(-2, 3); ctx.lineTo(-6, 12); ctx.lineTo(-12, 12);
+  ctx.lineTo(-9, 1); ctx.lineTo(-13, 1);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function shieldTick(x, y, s, col) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = col; ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.moveTo(0, -22); ctx.lineTo(18, -14); ctx.lineTo(18, 6);
+  ctx.quadraticCurveTo(18, 20, 0, 26);
+  ctx.quadraticCurveTo(-18, 20, -18, 6); ctx.lineTo(-18, -14);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#06301c'; ctx.lineWidth = 4.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(-8, 1); ctx.lineTo(-2, 8); ctx.lineTo(9, -7); ctx.stroke();
+  ctx.restore();
+}
+
+/* a red "banned" disc, drawn cracked in half and falling apart */
+function brokenBan(x, y, r, split) {
+  ctx.save(); ctx.translate(x, y);
+  for (const dir of [-1, 1]) {
+    ctx.save();
+    ctx.translate(dir * split, dir * split * 0.35); ctx.rotate(dir * 0.12);
+    ctx.beginPath();
+    if (dir < 0) ctx.arc(0, 0, r, Math.PI * 0.72, Math.PI * 1.72);
+    else ctx.arc(0, 0, r, Math.PI * 1.72, Math.PI * 0.72);
+    ctx.closePath(); ctx.clip();
+    ctx.strokeStyle = '#e8283f'; ctx.lineWidth = r * 0.22;
+    ctx.beginPath(); ctx.arc(0, 0, r * 0.88, 0, 6.2832); ctx.stroke();
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-r * 0.6, r * 0.6); ctx.lineTo(r * 0.6, -r * 0.6); ctx.stroke();
+    ctx.restore();
+  }
+  // the bottle that is no longer banned
+  ctx.fillStyle = 'rgba(210,244,255,.95)';
+  rr(ctx, -r * 0.20, -r * 0.42, r * 0.40, r * 0.84, r * 0.16); ctx.fill();
+  ctx.fillStyle = '#4fb8ff';
+  rr(ctx, -r * 0.12, -r * 0.56, r * 0.24, r * 0.16, r * 0.06); ctx.fill();
+  ctx.restore();
+}
+
+function trophy(x, y, s, col) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(-22, -34); ctx.lineTo(22, -34);
+  ctx.quadraticCurveTo(20, 6, 0, 14); ctx.quadraticCurveTo(-20, 6, -22, -34);
+  ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 6; ctx.strokeStyle = col;
+  for (const d of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(d * 22, -30);
+    ctx.quadraticCurveTo(d * 40, -22, d * 24, -6);
+    ctx.stroke();
+  }
+  ctx.fillRect(-5, 14, 10, 12);
+  ctx.fillRect(-18, 26, 36, 8);
+  ctx.fillRect(-24, 34, 48, 9);
+  ctx.restore();
+}
+
 const SCENES = [
 
 /* 1 ─ FIFA backed down on water bottles ─────────────── */
@@ -481,6 +599,9 @@ const SCENES = [
     ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(0, hz + (H - hz) * 0.36); ctx.lineTo(W, hz + (H - hz) * 0.36); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(W / 2, hz + (H - hz) * 0.36, W * 0.10, (H - hz) * 0.17, 0, 0, 6.2832); ctx.stroke();
+    // the bottle ban, broken open — halves drifting apart on the beat
+    brokenBan(W * 0.19, H * 0.40, Math.min(W, H) * 0.11, 6 + S.kick * 9);
+    shieldTick(W * 0.19, H * 0.56, Math.min(W, H) * 0.0016, '#38e08a');
   }
 },
 
@@ -495,11 +616,29 @@ const SCENES = [
       g.fillStyle = '#101c33'; g.fillRect(0, 0, w, h);
       const cw = w / 11, ch = cw * 0.78;
       for (let r = 0; r * (ch + 16) < h; r++) for (let c = 0; c < 11; c++) {
-        const x = c * cw + cw * 0.22, y = r * (ch + 16) + 20;
-        g.fillStyle = '#1b2c48'; rr(g, x - 5, y - 5, cw * 0.60 + 10, ch + 10, 4); g.fill();
-        g.fillStyle = ((r * 5 + c * 3) % 7 < 4) ? '#ffd98a' : '#22304c';
-        rr(g, x, y, cw * 0.60, ch, 2); g.fill();
-        g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x + cw * 0.29, y, 2, ch); g.fillRect(x, y + ch / 2, cw * 0.60, 2);
+        const x = c * cw + cw * 0.22, y = r * (ch + 16) + 20, ww = cw * 0.60;
+        g.fillStyle = '#22384f'; rr(g, x - 5, y - 5, ww + 10, ch + 10, 4); g.fill();
+        const lit = (r * 5 + c * 3) % 7 < 4;
+        g.fillStyle = lit ? '#ffd98a' : '#22304c';
+        rr(g, x, y, ww, ch, 2); g.fill();
+        // frost creeping across the glass from every corner
+        for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+          const gr = g.createRadialGradient(x + fx * ww, y + fy * ch, 0, x + fx * ww, y + fy * ch, ww * 0.62);
+          gr.addColorStop(0, 'rgba(226,248,255,.85)'); gr.addColorStop(1, 'rgba(226,248,255,0)');
+          g.fillStyle = gr; rr(g, x, y, ww, ch, 2); g.fill();
+        }
+        g.fillStyle = 'rgba(10,30,50,.30)'; g.fillRect(x + ww / 2 - 1, y, 2, ch); g.fillRect(x, y + ch / 2, ww, 2);
+        // snow piled on the sill, icicles hanging off it
+        g.fillStyle = '#eaf9ff';
+        rr(g, x - 7, y + ch + 3, ww + 14, 7, 3); g.fill();
+        for (let k = 0; k < 4; k++) {
+          const ix = x + 4 + k * (ww / 3.2), il = 8 + ((r * 7 + c * 5 + k * 11) % 17);
+          g.beginPath();
+          g.moveTo(ix - 3.5, y + ch + 9); g.lineTo(ix + 3.5, y + ch + 9);
+          g.quadraticCurveTo(ix + 1, y + ch + 9 + il * 0.7, ix, y + ch + 9 + il);
+          g.quadraticCurveTo(ix - 1, y + ch + 9 + il * 0.7, ix - 3.5, y + ch + 9);
+          g.closePath(); g.fill();
+        }
       }
     });
     ctx.globalAlpha = 0.95; ctx.drawImage(facade, 0, 0); ctx.globalAlpha = 1;
@@ -516,14 +655,29 @@ const SCENES = [
       ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     }
     ctx.restore();
-    // big 0%
+    // the rent, frozen solid inside a block of ice
     ctx.save();
+    const bx = W * 0.185, by = H * 0.48, bw = Math.min(W * 0.20, H * 0.28), bh = bw * 1.12;
+    ctx.translate(bx, by);
+    ctx.fillStyle = 'rgba(158,230,255,.46)';
+    ctx.strokeStyle = 'rgba(226,248,255,.85)'; ctx.lineWidth = 4;
+    rr(ctx, -bw / 2, -bh / 2, bw, bh, bw * 0.10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.30)';
+    ctx.beginPath(); ctx.moveTo(-bw * 0.36, -bh * 0.42); ctx.lineTo(-bw * 0.10, -bh * 0.42);
+    ctx.lineTo(-bw * 0.30, bh * 0.42); ctx.lineTo(-bw * 0.46, bh * 0.42); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = `rgba(215,245,255,${0.85 + S.kick * 0.15})`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = `900 ${H * 0.42}px Helvetica,Arial`;
-    ctx.fillStyle = `rgba(200,245,255,${0.09 + S.kick * 0.05})`;
-    ctx.fillText('0%', W / 2, H * 0.50);
+    ctx.font = `900 ${bw * 0.78}px Helvetica,Arial`;
+    ctx.fillText('$', 0, 0);
+    for (let k = 0; k < 5; k++) icicle(-bw * 0.4 + k * bw * 0.2, bh / 2, 5, 10 + (k % 3) * 9, '#dff5ff');
     ctx.restore();
-    floorBand(H * 0.88, '#0a1428');
+    // snowdrift along the street
+    ctx.fillStyle = '#0a1428'; ctx.fillRect(0, H * 0.88, W, H * 0.12);
+    ctx.fillStyle = '#e9f7ff';
+    ctx.beginPath(); ctx.moveTo(0, H * 0.905);
+    for (let x = 0; x <= W; x += W / 12) ctx.quadraticCurveTo(x + W / 24, H * 0.885, x + W / 12, H * 0.905);
+    ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill();
+    icicles: for (let i = 0; i < 26; i++) icicle((i + 0.5) * W / 26, 0, 7, 22 + ((i * 13) % 30), '#dff5ff');
   }
 },
 
@@ -578,6 +732,7 @@ const SCENES = [
     ctx.strokeStyle = '#e8365f'; ctx.lineWidth = 8; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(-46, -40); ctx.lineTo(46, 44); ctx.stroke();
     ctx.restore();
+    shieldTick(W * 0.20, H * 0.58, Math.min(W, H) * 0.0022 * (1 + S.kick * 0.05), '#5ecb6b');
     floorBand(H * 0.90, '#e88bb6');
   }
 },
@@ -630,6 +785,12 @@ const SCENES = [
     ctx.beginPath(); ctx.moveTo(0, -ballR); ctx.lineTo(0, ballR); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(0, 0, ballR * 0.52, ballR, 0, 0, 6.2832); ctx.stroke();
     ctx.restore();
+    // the trophy, lifted
+    ctx.save();
+    ctx.translate(W * 0.20, H * 0.50 - S.kick * 8);
+    ctx.shadowColor = '#F58426'; ctx.shadowBlur = 26 + S.kick * 40;
+    trophy(0, 0, Math.min(W, H) * 0.0038, '#f7c14b');
+    ctx.restore();
     // banner in the rafters
     ctx.save();
     ctx.translate(W * 0.85, H * 0.16 + Math.sin(S.t * 1.2) * 5);
@@ -675,6 +836,23 @@ const SCENES = [
         ctx.fillStyle = '#ffd400'; ctx.fillText('WINNER', x + bw / 2, base - hgt - Math.min(W, H) * 0.022);
       }
     }
+    ctx.restore();
+    // a ballot dropping into the box
+    ctx.save();
+    ctx.translate(W * 0.82, H * 0.47);
+    const bxw = Math.min(W * 0.17, H * 0.24);
+    const slip = (S.t * 26) % (bxw * 0.9);
+    ctx.fillStyle = '#fffdf3'; ctx.strokeStyle = '#c9bda2'; ctx.lineWidth = 2;
+    ctx.save(); ctx.translate(0, -bxw * 0.86 + slip); ctx.rotate(0.06);
+    rr(ctx, -bxw * 0.22, -bxw * 0.26, bxw * 0.44, bxw * 0.52, 3); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#ffd400'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(-bxw * 0.10, 0); ctx.lineTo(-bxw * 0.02, bxw * 0.10);
+    ctx.lineTo(bxw * 0.13, -bxw * 0.14); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#4b4278'; ctx.strokeStyle = '#8f86c9'; ctx.lineWidth = 4;
+    rr(ctx, -bxw / 2, -bxw * 0.30, bxw, bxw * 0.72, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#17122e';
+    rr(ctx, -bxw * 0.28, -bxw * 0.35, bxw * 0.56, bxw * 0.10, 4); ctx.fill();
     ctx.restore();
     // balloons drifting up
     for (let i = 0; i < 9; i++) {
@@ -739,6 +917,26 @@ const SCENES = [
       ctx.fillText(letters[i], 0, bs * 0.03);
       ctx.restore();
     }
+    // a stroller parked on the grass
+    ctx.save();
+    ctx.translate(W * 0.80, H * 0.66);
+    const u2 = Math.min(W, H) * 0.21;
+    ctx.strokeStyle = '#3a2b52'; ctx.lineWidth = u2 * 0.075; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-u2 * 0.42, u2 * 0.12); ctx.lineTo(u2 * 0.30, u2 * 0.12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(u2 * 0.30, u2 * 0.12); ctx.lineTo(u2 * 0.56, -u2 * 0.46); ctx.stroke();
+    ctx.fillStyle = '#ff6f91';
+    ctx.beginPath();
+    ctx.moveTo(-u2 * 0.44, u2 * 0.10);
+    ctx.quadraticCurveTo(-u2 * 0.52, -u2 * 0.46, u2 * 0.16, -u2 * 0.40);
+    ctx.lineTo(u2 * 0.30, u2 * 0.10); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#3a2b52';
+    for (const wx of [-0.30, 0.20]) {
+      ctx.beginPath(); ctx.arc(u2 * wx, u2 * 0.40, u2 * 0.15, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#cfc3e6';
+      ctx.beginPath(); ctx.arc(u2 * wx, u2 * 0.40, u2 * 0.06, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#3a2b52';
+    }
+    ctx.restore();
     floorBand(H * 0.93, '#8ec96b');
   }
 },
@@ -777,6 +975,24 @@ const SCENES = [
       ctx.closePath(); ctx.fill();
     }
     ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(ax, ay + ah - 6, aw, 6);
+    ctx.restore();
+    // the city's own flag flying over the stall
+    ctx.save();
+    ctx.translate(W * 0.18, H * 0.40);
+    ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, H * 0.16); ctx.stroke();
+    const fw = Math.min(W * 0.115, H * 0.16), fh = fw * 0.56;
+    const wave = Math.sin(S.t * 2.2) * fh * 0.07;
+    const cols = ['#2f5fa8', '#f2f1ea', '#e8683c'];
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = cols[i];
+      ctx.beginPath();
+      ctx.moveTo(0, i * fh / 3);
+      ctx.quadraticCurveTo(fw * 0.5, i * fh / 3 + wave, fw, i * fh / 3 - wave * 0.6);
+      ctx.lineTo(fw, (i + 1) * fh / 3 - wave * 0.6);
+      ctx.quadraticCurveTo(fw * 0.5, (i + 1) * fh / 3 + wave, 0, (i + 1) * fh / 3);
+      ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
     // produce crates
     const crates = [[0.10, '#ff5e4d', 'APPLES'], [0.28, '#ffc93c', 'BANANAS'],
@@ -853,9 +1069,22 @@ const SCENES = [
     ctx.shadowColor = '#00d488'; ctx.shadowBlur = 20 + S.kick * 34;
     ctx.beginPath(); ctx.arc(0, -H * 0.015, Math.min(W, H) * 0.028, 0, 6.2832); ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#e9f6ff'; ctx.textAlign = 'center';
-    ctx.font = `900 ${Math.min(W, H) * 0.018}px Helvetica,Arial`;
-    ctx.fillText('HALF', 0, H * 0.045); ctx.fillText('PRICE', 0, H * 0.068);
+    ctx.restore();
+    // a fare card sliced in two, halves drifting apart
+    ctx.save();
+    ctx.translate(W * 0.19, H * 0.40);
+    const cw2 = Math.min(W * 0.19, H * 0.26), chh = cw2 * 0.62, gap2 = 5 + S.kick * 10;
+    for (const d of [-1, 1]) {
+      ctx.save(); ctx.translate(d * gap2, d * gap2 * 0.30); ctx.rotate(d * 0.045);
+      ctx.beginPath();
+      if (d < 0) rr(ctx, -cw2 / 2, -chh / 2, cw2 / 2, chh, 6);
+      else rr(ctx, 0, -chh / 2, cw2 / 2, chh, 6);
+      ctx.clip();
+      ctx.fillStyle = '#f5d33a'; rr(ctx, -cw2 / 2, -chh / 2, cw2, chh, 8); ctx.fill();
+      ctx.fillStyle = '#0039A6'; ctx.fillRect(-cw2 / 2, -chh * 0.10, cw2, chh * 0.20);
+      ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(-cw2 / 2, chh * 0.22, cw2, chh * 0.10);
+      ctx.restore();
+    }
     ctx.restore();
   }
 },
@@ -892,12 +1121,21 @@ const SCENES = [
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     }
     ctx.stroke(); ctx.shadowBlur = 0;
+    // every point on the line is a gun, shrinking and fading as the count falls
+    const sc0 = Math.min(W, H) * 0.0016;
     for (let i = 0; i < pts.length; i++) {
-      const x = x0 + (x1 - x0) * i / (pts.length - 1);
+      const f = i / (pts.length - 1);
+      const x = x0 + (x1 - x0) * f;
       const y = y1 - (y1 - y0) * pts[i];
-      ctx.fillStyle = '#eafff2';
-      ctx.beginPath(); ctx.arc(x, y, 4 + S.kick * 2.5, 0, 6.2832); ctx.fill();
+      const sz = sc0 * (1.5 - f * 1.05) * (1 + S.kick * 0.08);
+      pistol(x, y - 10 * sz, sz, '#dff6e8', 0.92 - f * 0.55);
+      if (i % 3 === 2) {                       // a few tumbling off the chart entirely
+        const drop = ((S.t * 34 + i * 90) % (H * 0.34));
+        pistol(x + 14, y + 22 + drop, sz * 0.8, '#7ee8a0', Math.max(0, 0.4 - drop / (H * 0.34) * 0.4));
+      }
     }
+    shieldTick(x1 + Math.min(W, H) * 0.055, y1 - (y1 - y0) * pts[pts.length - 1],
+               Math.min(W, H) * 0.0022 * (1 + S.kick * 0.06), '#7ee8a0');
     ctx.restore();
   }
 }
@@ -1622,7 +1860,6 @@ function frame(now) {
 function draw() {
   ctx.clearRect(0, 0, W, H);
   SC().draw();
-  drawSign(SC().sign);
   if (S.sceneFade < 1) {                       // quick white wipe between scenes
     ctx.fillStyle = `rgba(255,255,255,${(1 - S.sceneFade) * 0.5})`;
     ctx.fillRect(0, 0, W, H);
@@ -1649,6 +1886,46 @@ function hud() {
   el('cSpot').innerHTML = S.sp.on ? '♪ <b>SPOTIFY ON</b>' : '♪ CONNECT SPOTIFY';
 }
 setInterval(() => { if (S.started) hud(); }, 700);
+
+/* One line that answers "is this actually working?" without reading the HUD. */
+let quietSince = 0;
+function status() {
+  if (!S.started) { el('status').classList.remove('on'); return; }
+  const box = el('status'), txt = el('statusText');
+  box.classList.add('on');
+  const bpm = Math.round(S.bpm);
+  const listening = S.mic && (S.listen === 'stream' || S.listen === 'mic');
+  const signal = S.energy > 0.06 || S.bass > 0.04;
+
+  if (listening && !signal) {
+    if (!quietSince) quietSince = S.t;
+  } else quietSince = 0;
+
+  let warn = false, t;
+  if (listening && quietSince && S.t - quietSince > 6) {
+    warn = true;
+    t = S.listen === 'stream'
+      ? 'no sound coming through — re-share with audio switched on'
+      : 'mic hears nothing — turn it up or use this computer’s audio';
+  } else if (S.listen === 'stream' && listening) {
+    t = 'synced · listening to this computer · ' + bpm + ' bpm';
+  } else if (S.listen === 'mic' && listening) {
+    t = 'synced · listening to the room · ' + bpm + ' bpm';
+  } else if (S.sync === 'grid') {
+    t = 'synced to spotify’s beat grid · ' + bpm + ' bpm';
+  } else if (S.sync === 'deezer' || S.sync === 'tempo') {
+    t = 'synced to the track · ' + bpm + ' bpm';
+  } else if (S.sync === 'saved') {
+    t = 'synced · your tapped tempo · ' + bpm + ' bpm';
+  } else if (S.sync === 'default') {
+    warn = true; t = 'guessing 120 bpm — tap space on the beat to fix it';
+  } else {
+    warn = true; t = 'not synced — connect spotify, or tap space on the beat';
+  }
+  txt.textContent = t;
+  box.classList.toggle('warn', warn);
+}
+setInterval(status, 500);
 
 let hideT;
 function poke() {
@@ -1678,7 +1955,26 @@ async function begin(listen) {
 }
 el('go').addEventListener('click', () => begin(null));
 el('useMic').addEventListener('click', () => begin('mic'));
-el('useStream').addEventListener('click', () => begin('stream'));
+el('useStream').addEventListener('click', () => {
+  el('share').classList.remove('gone');
+  el('shareMsg').className = ''; el('shareMsg').textContent = '';
+});
+el('shareCancel').addEventListener('click', () => el('share').classList.add('gone'));
+el('shareGo').addEventListener('click', async () => {
+  const m = el('shareMsg');
+  m.className = ''; m.textContent = 'Opening Chrome\u2019s picker\u2026';
+  try {
+    await startStream();
+    m.textContent = 'Got the audio. \u266a';
+    el('share').classList.add('gone');
+    if (!S.started) begin(null); else { S.sync = 'stream'; hud(); }
+  } catch (e) {
+    m.className = 'err';
+    m.textContent = e && e.message === 'no-audio'
+      ? 'That share had no sound in it — go back and switch on "share tab audio" (or "share system audio") before pressing Share.'
+      : 'Chrome didn\u2019t hand over any audio. You can skip this — Spotify\u2019s track info still keeps him in time.';
+  }
+});
 el('sens').addEventListener('input', e => { S.sens = parseFloat(e.target.value); });
 
 el('redir').value = REDIRECT;
