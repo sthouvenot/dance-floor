@@ -36,6 +36,8 @@
   .ghost { background:transparent; color:#8c7bb3; font-size:13.5px; padding:11px 20px;
     border:1px solid rgba(160,120,255,.32); letter-spacing:.05em; }
   .ghost:hover { color:#fff; border-color:rgba(200,160,255,.7); }
+  .ghost.hero { color:#ffe27a; border-color:rgba(255,212,0,.55); background:rgba(255,212,0,.10); }
+  .ghost.hero:hover { color:#fff; border-color:#ffd400; background:rgba(255,212,0,.2); }
   .ghost.sp { color:#8ee9ad; border-color:rgba(29,185,84,.45); }
   .ghost.sp:hover { color:#fff; border-color:var(--sp); background:rgba(29,185,84,.14); }
 
@@ -109,14 +111,14 @@
 <div class="overlay" id="start">
   <h1>MAMDANI<br>DANCE FLOOR</h1>
   <p class="welcome">Mamdani welcomes you to Electric Stimaloo</p>
-  <p class="sub">Put it on the big screen, play your music out loud, hit start. He listens to the room
-     through the mic and dances to whatever's actually on — and every backdrop is something
-     that <b>really happened</b>. Connect Spotify for the track name and album art along the bottom.</p>
+  <p class="sub">Put it on the big screen and hit start. Connect Spotify and he takes the beat from
+     the track itself — no microphone needed, which matters once the room gets loud. Every backdrop
+     is something that <b>really happened</b>.</p>
   <button id="go">TAP TO START</button>
   <div class="row">
     <button class="ghost sp" id="openSetup">connect spotify</button>
-    <button class="ghost" id="useStream">🔊 use this computer's audio (tightest sync)</button>
-    <button class="ghost" id="useMic">🎤 use room mic</button>
+    <button class="ghost hero" id="useStream">🔊 read this computer's audio — perfect beat</button>
+    <button class="ghost" id="useMic">🎤 room mic</button>
   </div>
   <p class="note">Loud party? Skip the mic. Just press start — he takes the tempo from
      Spotify's track info, and <b>space</b> taps it in by hand any time. If the music plays
@@ -212,7 +214,7 @@ const S = {
   scene:0, auto:true, sceneAt:0, sceneFade:1,
   lastBeat:-9, intervals:[], taps:[], parts:[], head:0,
   tint:null,
-  sync:'clock', offset:0, grid:null, gridIdx:0, lastTempoBeat:-1,
+  sync:'clock', offset:0, grid:null, gridIdx:0, lastTempoBeat:-1, lastBpmSave:-9,
   sp:{ on:false, playing:false, id:null, p0:0, t0:0, dur:0, art:'' }
 };
 
@@ -305,6 +307,11 @@ function onset(strength) {
     while (bpm < 84) bpm *= 2;
     while (bpm > 172) bpm /= 2;
     S.bpm += (bpm - S.bpm) * 0.12;
+    // once the estimate settles, remember it for this track — next time it's instant
+    if (S.sp.id && S.intervals.length >= 8 && S.t - S.lastBpmSave > 3) {
+      S.lastBpmSave = S.t;
+      store.set('bpm.' + S.sp.id, String(S.bpm));
+    }
   }
   // Onsets don't move him directly — they steer a free-running oscillator. A missed or
   // spurious hit can't jerk him, and only onsets near an expected beat pull the phase.
