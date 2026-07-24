@@ -1981,7 +1981,6 @@ let quietSince = 0;
 function status() {
   if (!S.started) { el('status').classList.remove('on'); return; }
   const box = el('status'), txt = el('statusText');
-  box.classList.add('on');
   const bpm = Math.round(S.bpm);
   const listening = S.mic && (S.listen === 'stream' || S.listen === 'mic');
   const signal = S.energy > 0.06 || S.bass > 0.04;
@@ -2019,8 +2018,12 @@ setInterval(status, 500);
 let hideT;
 function poke() {
   el('hud').classList.remove('hide');
+  if (S.started) el('status').classList.add('on');     // only while you're moving the mouse
   clearTimeout(hideT);
-  hideT = setTimeout(() => el('hud').classList.add('hide'), 3500);
+  hideT = setTimeout(() => {
+    el('hud').classList.add('hide');
+    el('status').classList.remove('on');
+  }, 3500);
 }
 window.addEventListener('mousemove', poke);
 window.addEventListener('touchstart', poke);
