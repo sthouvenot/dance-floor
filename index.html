@@ -135,6 +135,14 @@
       <code>start-dance-floor.bat</code> from the same folder, and use the <code>http://127.0.0.1:8420/…</code>
       page it opens. Everything else works fine right here.
     </div>
+    <div id="quickWrap">
+      <button class="mini go" id="quickConnect"
+        style="padding:17px 30px;font-size:15px;letter-spacing:.08em">SIGN IN TO SPOTIFY</button>
+      <p class="lead" style="margin:14px 0 0">This device signs in once, then reconnects on its own
+        every time you open the page. Use the same Spotify account the app was made with.</p>
+      <button class="ghost" id="showAdv" style="margin-top:6px">set up a different Spotify app</button>
+    </div>
+    <div id="advWrap">
     <ol>
       <li>Open <code>developer.spotify.com/dashboard</code> → <b>Create app</b>. Any name will do.</li>
       <li>Paste this exact <b>Redirect URI</b> into the app:</li>
@@ -142,6 +150,7 @@
     <div class="uri"><input type="text" id="redir" readonly><button class="mini" id="copyRedir">COPY</button></div>
     <ol start="3"><li>Tick <b>Web API</b>, save, then paste the app's <b>Client ID</b> here:</li></ol>
     <div class="uri"><input type="text" id="clientId" placeholder="client id" spellcheck="false"><button class="mini go" id="spConnect">CONNECT</button></div>
+    </div>
     <div id="spMsg"></div>
     <div class="row" style="margin-top:18px;justify-content:flex-start">
       <button class="ghost" id="closeSetup">back</button>
@@ -1202,6 +1211,8 @@ function welcome() {
 /* ═══════════════════════ spotify ═══════════════════════ */
 const SP = { cid:null, token:null, refresh:null, expires:0, timer:null, backoff:3000 };
 const REDIRECT = location.origin + location.pathname;
+// PKCE client IDs are public by design, so shipping it just saves retyping on a new device
+const DEFAULT_CID = 'e31f5baf1b894144966a0b7ad6ce5971';
 const el = id => document.getElementById(id);
 
 /* remembers the Spotify link on this device only, so a hosted copy reconnects
@@ -1258,7 +1269,7 @@ async function spConnect(cid) {
 /* already linked on this device? reconnect silently before anyone presses anything */
 async function autoConnect() {
   const params = new URLSearchParams(location.search);
-  const cid = params.get('cid') || store.get('cid'), rt = store.get('rt');
+  const cid = params.get('cid') || store.get('cid') || DEFAULT_CID, rt = store.get('rt');
   if (cid) el('clientId').value = cid;
   if (!cid || !rt) return;
   SP.cid = cid; SP.refresh = rt;
@@ -1638,6 +1649,14 @@ el('spConnect').addEventListener('click', async () => {
   } catch (e) { msg.className = 'err'; msg.textContent = e.message || 'Could not connect.'; }
 });
 el('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') el('spConnect').click(); });
+el('quickConnect').addEventListener('click', () => el('spConnect').click());
+el('showAdv').addEventListener('click', () => {
+  el('quickWrap').style.display = 'none';
+  el('advWrap').style.display = 'block';
+});
+// if we already know the app, lead with the one-tap version
+if (el('clientId').value || DEFAULT_CID) el('advWrap').style.display = 'none';
+else el('quickWrap').style.display = 'none';
 el('forget').addEventListener('click', forgetSpotify);
 autoConnect();
 
