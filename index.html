@@ -23,6 +23,9 @@
   .sub { max-width:37em; font-size:clamp(14px,1.7vw,17px); line-height:1.55; color:#c9b8e8; }
   .sub b { color:#fff; }
   .note { font-size:12.5px; color:#6d5f8c; max-width:34em; line-height:1.55; }
+  .welcome { font-size:clamp(15px,2.1vw,23px); font-weight:800; letter-spacing:.14em;
+    text-transform:uppercase; color:#fff; margin-top:-6px;
+    text-shadow:0 0 22px rgba(255,47,208,.75); }
   button { font:inherit; cursor:pointer; border:0; border-radius:999px; }
   #go { padding:19px 52px; font-size:clamp(16px,2.3vw,22px); font-weight:800; letter-spacing:.14em;
     color:#12002b; background:linear-gradient(100deg,#ffd400,#ff2fd0 60%,#00e5ff);
@@ -105,16 +108,20 @@
 
 <div class="overlay" id="start">
   <h1>MAMDANI<br>DANCE FLOOR</h1>
+  <p class="welcome">Mamdani welcomes you to Electric Stimaloo</p>
   <p class="sub">Put it on the big screen, play your music out loud, hit start. He listens to the room
      through the mic and dances to whatever's actually on — and every backdrop is something
      that <b>really happened</b>. Connect Spotify for the track name and album art along the bottom.</p>
   <button id="go">TAP TO START</button>
   <div class="row">
     <button class="ghost sp" id="openSetup">connect spotify</button>
-    <button class="ghost" id="nomic">no mic — just loop a beat</button>
+    <button class="ghost" id="useStream">🔊 use this computer's audio (tightest sync)</button>
+    <button class="ghost" id="useMic">🎤 use room mic</button>
   </div>
-  <p class="note">Mic audio never leaves this page — nothing is recorded or uploaded.
-     Best in Chrome, full screen, page kept in front.</p>
+  <p class="note">Loud party? Skip the mic. Just press start — he takes the tempo from
+     Spotify's track info, and <b>space</b> taps it in by hand any time. If the music plays
+     from this computer, "use this computer's audio" reads the signal directly and is perfect.
+     Audio never leaves this page; nothing is recorded or uploaded.</p>
 </div>
 
 <div class="overlay gone" id="setup">
@@ -153,7 +160,6 @@
 <div id="np">
   <img id="npArt" alt="">
   <div class="meta">
-    <div class="srcline"><span class="dot"></span><span id="npSrc">SPOTIFY</span></div>
     <div class="marq"><span id="npTitle">—</span></div>
     <div id="npArtist">—</div>
     <div class="bar"><div id="npFill"></div></div>
@@ -200,7 +206,7 @@ function cache(key, w, h, fn) {
 
 /* ═══════════════════════ state ═══════════════════════ */
 const S = {
-  started:false, mic:false, sens:1.32,
+  started:false, mic:false, listen:null, sens:1.32,
   t:0, dt:0, bpm:120, phase:0, beat:0,
   energy:0, bass:0, air:0, kick:0, flash:0,
   scene:0, auto:true, sceneAt:0, sceneFade:1,
@@ -221,22 +227,41 @@ const HEAD_SRC = {"grin": "data:image/webp;base64,UklGRppOAABXRUJQVlA4WAoAAAAQAA
 const IMGS = HEADS.map(h => { const i = new Image(); i.src = HEAD_SRC[h.k] || ''; return i; });
 
 /* ═══════════════════════ audio ═══════════════════════ */
-let analyser = null, freq = null;
-const hist = [];
+let analyser = null, freq = null, prevSpec = null;
+const hist = [], fluxHist = [];
 
-async function startMic() {
+function attach(stream) {
   const AC = window.AudioContext || window.webkitAudioContext;
   const ac = new AC();
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
-  await ac.resume();
+  ac.resume();
   ac.createMediaStreamSource(stream).connect(analyser = ac.createAnalyser());
   analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.55;
   freq = new Uint8Array(analyser.frequencyBinCount);
   S.mic = true;
 }
 
-const lockedToSpotify = () => (S.sync === 'grid' || S.sync === 'tempo') && S.sp.playing;
+async function startMic() {
+  attach(await navigator.mediaDevices.getUserMedia({
+    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }));
+  S.listen = 'mic';
+}
+
+/* Reads the audio Chrome is playing rather than the room. At a loud party this is the
+   difference between a clean signal and a wall of noise — and it needs no microphone.
+   Chrome only offers audio when sharing a tab or a whole screen, so we ask for video
+   too and throw the video track away immediately. */
+async function startStream() {
+  const s = await navigator.mediaDevices.getDisplayMedia({
+    video:true, audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+  s.getVideoTracks().forEach(t => t.stop());
+  if (!s.getAudioTracks().length) throw new Error('no-audio');
+  attach(s);
+  S.listen = 'stream';
+}
+
+// sync modes whose timing comes from the track position rather than from listening
+const POSLOCK = { tempo:1, deezer:1, saved:1, default:1 };
+const lockedToSpotify = () => (S.sync === 'grid' || POSLOCK[S.sync]) && S.sp.playing;
 
 function readAudio() {
   analyser.getByteFrequencyData(freq);
@@ -249,26 +274,51 @@ function readAudio() {
   S.air += (a - S.air) * 0.25;
   S.energy += (Math.min(1, all * 2.4) - S.energy) * 0.12;
   hist.push(b); if (hist.length > 45) hist.shift();
-  const avg = hist.reduce((x, y) => x + y, 0) / hist.length;
+
+  // ── onset detection by spectral flux: catches kicks, snares and hats rather than
+  //    bass alone, which tracks far more music than a plain energy gate.
+  let flux = 0;
+  if (prevSpec) {
+    for (let i = 2; i < 280; i++) { const d = freq[i] - prevSpec[i]; if (d > 0) flux += d; }
+    flux /= (278 * 255);
+  } else prevSpec = new Uint8Array(freq.length);
+  prevSpec.set(freq);
+
+  fluxHist.push(flux); if (fluxHist.length > 64) fluxHist.shift();
+  const mean = fluxHist.reduce((x, y) => x + y, 0) / fluxHist.length;
+  let vari = 0;
+  for (const f of fluxHist) vari += (f - mean) * (f - mean);
+  const sd = Math.sqrt(vari / fluxHist.length);
+
   // when Spotify is driving the beat the mic only feeds the visuals, never the timing
-  if (!lockedToSpotify() && b > avg * S.sens && b > 0.055 && S.t - S.lastBeat > 0.24) onset(b);
+  if (!lockedToSpotify() && flux > mean + sd * (S.sens - 0.35) && flux > 0.003
+      && S.t - S.lastBeat > 0.22) onset(flux);
 }
 
 function onset(strength) {
   const gap = S.t - S.lastBeat;
   S.lastBeat = S.t;
   if (gap > 0.28 && gap < 1.6) {
-    S.intervals.push(gap); if (S.intervals.length > 9) S.intervals.shift();
+    S.intervals.push(gap); if (S.intervals.length > 11) S.intervals.shift();
     const sorted = [...S.intervals].sort((x, y) => x - y);
-    let bpm = 60 / sorted[sorted.length >> 1];
+    let bpm = 60 / sorted[sorted.length >> 1];         // median resists stray intervals
     while (bpm < 84) bpm *= 2;
     while (bpm > 172) bpm /= 2;
-    S.bpm += (bpm - S.bpm) * 0.18;
+    S.bpm += (bpm - S.bpm) * 0.12;
   }
-  let err = S.phase > 0.5 ? S.phase - 1 : S.phase;
-  S.phase -= err * 0.45;
-  if (S.phase < 0) S.phase += 1;
-  pulse(Math.min(1.4, 0.7 + strength * 2));
+  // Onsets don't move him directly — they steer a free-running oscillator. A missed or
+  // spurious hit can't jerk him, and only onsets near an expected beat pull the phase.
+  const err = S.phase > 0.5 ? S.phase - 1 : S.phase;   // -0.5..0.5 beats off the downbeat
+  if (POSLOCK[S.sync]) {            // tempo is trusted; audio only tells us where beat 1 is
+    if (Math.abs(err) < 0.34) S.offset -= err * (60 / S.bpm) * 0.12;
+    return;
+  }
+  if (Math.abs(err) < 0.34) {                          // ignore clearly off-beat transients
+    S.phase -= err * 0.24;                             // ease the phase over
+    if (S.phase < 0) S.phase += 1;
+    if (S.phase >= 1) S.phase -= 1;
+    S.bpm = Math.max(70, Math.min(180, S.bpm - err * 1.6));   // and trim the tempo
+  }
 }
 
 function pulse(power) {
@@ -883,6 +933,7 @@ function getPose(b, m, e) {
 
   case 0:                                             // two-step + arm pump
     P.bob = 0.09 * amp * hit; P.lean = s * 0.10; P.head = -s * 0.13;
+    P.dx = Math.sin(Math.PI * b / 2) * 1.25;
     P.aR = [0.60 + s * 0.55, -1.05 - s * 0.35];
     P.aL = [-0.60 + s * 0.55, 1.05 - s * 0.35];
     P.lR = [0.22 + s * 0.16, -0.14]; P.lL = [-0.22 + s * 0.16, 0.14];
@@ -890,7 +941,7 @@ function getPose(b, m, e) {
 
   case 1: {                                           // hands up, big sway
     const q = Math.sin(Math.PI * b / 2);
-    P.bob = 0.07 * amp * hit; P.dx = q * 0.30;
+    P.bob = 0.07 * amp * hit; P.dx = q * 1.7;
     P.lean = q * 0.20; P.head = q * 0.20;
     P.aR = [Math.PI - 0.30 + q * 0.30, -0.16 - hit * 0.22];
     P.aL = [-Math.PI + 0.30 + q * 0.30, 0.16 + hit * 0.22];
@@ -900,7 +951,7 @@ function getPose(b, m, e) {
   case 2: {                                           // disco point
     const side = (Math.floor(b) % 2 === 0) ? 1 : -1;
     P.bob = 0.09 * amp * hit; P.lean = -side * 0.16; P.head = side * 0.16;
-    P.dx = side * 0.16;
+    P.dx = side * 0.95 + Math.sin(Math.PI * b / 4) * 0.8;
     const up = [Math.PI - 0.80 - hit * 0.18, -0.06];
     const hipArm = [1.05, -1.75];
     if (side > 0) { P.aR = up; P.aL = [-hipArm[0], -hipArm[1]]; }
@@ -910,6 +961,7 @@ function getPose(b, m, e) {
 
   case 3:                                             // spin
     P.spin = Math.PI * b / 3; P.bob = 0.05 * amp * hit;
+    P.dx = Math.sin(Math.PI * b / 3) * 1.9;
     P.aR = [1.20 - hit * 0.28, -0.55]; P.aL = [-1.20 + hit * 0.28, 0.55];
     P.lR = [0.24, -0.10]; P.lL = [-0.24, 0.10];
     break;
@@ -917,6 +969,7 @@ function getPose(b, m, e) {
   case 4: {                                           // running man
     const u = Math.max(0, s), d = Math.max(0, -s);
     P.bob = 0.08 * amp * hit; P.lean = 0.09; P.head = -0.06;
+    P.dx = Math.sin(Math.PI * b / 4) * 2.1;
     P.lR = [0.28 + 0.66 * u, -1.34 * u - 0.10];
     P.lL = [-0.28 - 0.66 * d, 1.34 * d + 0.10];
     P.aR = [0.52 - s * 0.8, -1.25]; P.aL = [-0.52 - s * 0.8, 1.25];
@@ -924,7 +977,8 @@ function getPose(b, m, e) {
 
   case 5: {                                           // shoulder shimmy
     const f = Math.sin(Math.PI * b * 4);
-    P.bob = 0.05 * amp * hit; P.lean = f * 0.07; P.head = -f * 0.16; P.dx = f * 0.06;
+    P.bob = 0.05 * amp * hit; P.lean = f * 0.07; P.head = -f * 0.16;
+    P.dx = f * 0.22 + Math.sin(Math.PI * b / 4) * 1.5;
     P.aR = [0.95 + f * 0.20, -1.55]; P.aL = [-0.95 + f * 0.20, 1.55];
     P.lR = [0.20, -0.10]; P.lL = [-0.20, 0.10];
     break; }
@@ -932,6 +986,7 @@ function getPose(b, m, e) {
   case 6: {                                           // THE SPRINKLER
     P.spin = (Math.floor(b * 2) % 8) * 0.42;
     P.bob = 0.07 * amp * hit; P.head = 0.10;
+    P.dx = Math.sin(Math.PI * b / 8) * 2.2;
     P.aR = [1.52, 0.02];                               // arm locked straight out
     P.aL = [-2.55, 1.45];                              // hand behind the head
     P.lR = [0.24, -0.12]; P.lL = [-0.24, 0.12];
@@ -940,6 +995,7 @@ function getPose(b, m, e) {
   case 7: {                                           // THE LAWNMOWER
     const y2 = b % 2, pull = y2 < 1 ? y2 : 2 - y2;
     P.lean = 0.34 - pull * 0.34; P.bob = 0.14 * amp * (1 - pull);
+    P.dx = Math.sin(Math.PI * b / 6) * 2.0;
     P.head = 0.22 - pull * 0.30;
     P.aR = [1.00 - pull * 2.05, -0.55 + pull * 0.45];
     P.aL = [-0.42 - pull * 0.25, 0.75];
@@ -952,20 +1008,22 @@ function getPose(b, m, e) {
     const a1 = A[k], a2 = A[(k + 2) % 4];
     P.aR = a1; P.aL = [-a2[0], -a2[1]];
     P.lean = (k % 2 ? 0.10 : -0.10); P.head = (k % 2 ? -0.16 : 0.16);
-    P.bob = 0.03 + (k === 0 ? 0.05 : 0); P.dx = (k < 2 ? 0.10 : -0.10);
+    P.bob = 0.03 + (k === 0 ? 0.05 : 0);
+    P.dx = (k < 2 ? 0.55 : -0.55) + Math.sin(Math.PI * b / 8) * 1.3;
     P.lR = [0.20, -0.10]; P.lL = [-0.20, 0.10];
     break; }
 
   case 9: {                                           // CHARLESTON kicks
     const k = Math.max(0, s), k2 = Math.max(0, -s);
     P.bob = 0.08 * amp * hit; P.lean = s * 0.15; P.head = -s * 0.18;
+    P.dx = Math.sin(Math.PI * b / 2) * 1.5;
     P.lR = [0.20 + k * 0.85, -0.06]; P.lL = [-0.20 - k2 * 0.85, 0.06];
     P.aR = [0.66 - s * 1.05, -0.70]; P.aL = [-0.66 - s * 1.05, 0.70];
     break; }
 
   case 10: {                                          // side slide / moonwalk-ish
     const q = Math.sin(Math.PI * b / 2), f = Math.sin(Math.PI * b * 2);
-    P.dx = q * 1.15; P.lean = -q * 0.17; P.head = q * 0.12;
+    P.dx = q * 3.1; P.lean = -q * 0.20; P.head = q * 0.14;
     P.bob = 0.045 * amp * hit;
     P.lR = [0.30 + f * 0.30, -0.18 - Math.max(0, f) * 0.35];
     P.lL = [-0.30 + f * 0.30, 0.18 + Math.max(0, -f) * 0.35];
@@ -975,6 +1033,7 @@ function getPose(b, m, e) {
   default: {                                          // JUMP + double fist pump
     const air = Math.max(0, Math.sin(Math.PI * b));
     P.jump = air * 0.46 * amp; P.head = -air * 0.14;
+    P.dx = Math.sin(Math.PI * b / 4) * 1.6;
     P.aR = [Math.PI - 0.22, -0.06 - air * 0.30];
     P.aL = [-Math.PI + 0.22, 0.06 + air * 0.30];
     P.lR = [0.18 + air * 0.55, -0.55 * air - 0.10];
@@ -1019,7 +1078,8 @@ function drawDancer(cx, footY, u, b, e) {
   const P = getPose(b, m, e);
   const glow = S.tint || SC().pal[0];
   const hipY = footY - 1.05 * u - P.jump * u + P.bob * u;
-  const x = cx + P.dx * u;
+  const margin = Math.max(u * 0.75, W * 0.08);          // never let him walk off frame
+  const x = Math.max(margin, Math.min(W - margin, cx + P.dx * u));
 
   // shadow shrinks as he leaves the ground
   ctx.save();
@@ -1102,7 +1162,35 @@ function drawCrowd() {
   ctx.restore();
 }
 
-/* the stage is kept clean — the only words on screen are whatever Spotify is playing */
+/* the one standing line on the stage — sits low so it never fights the track readout */
+const WELCOME = 'MAMDANI WELCOMES YOU TO ELECTRIC STIMALOO';
+
+function welcome() {
+  const sc = SC();
+  let size = Math.min(W * 0.023, H * 0.032);
+  // scrim so it stays readable over the crowd
+  const g = ctx.createLinearGradient(0, H * 0.87, 0, H);
+  g.addColorStop(0, 'rgba(4,2,10,0)'); g.addColorStop(0.55, 'rgba(4,2,10,.62)');
+  g.addColorStop(1, 'rgba(4,2,10,.78)');
+  ctx.fillStyle = g; ctx.fillRect(0, H * 0.87, W, H * 0.13);
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const space = () => { if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${size * 0.22}px`; };
+  ctx.font = `900 ${size}px Helvetica,Arial,sans-serif`; space();
+  let w = ctx.measureText(WELCOME).width;
+  if (w > W * 0.9) {                                   // shrink to fit narrow screens
+    size *= (W * 0.9) / w;
+    ctx.font = `900 ${size}px Helvetica,Arial,sans-serif`; space();
+  }
+  ctx.translate(W / 2, H * 0.947);
+  const pop = 1 + S.kick * 0.025;
+  ctx.scale(pop, pop);
+  ctx.shadowColor = sc.pal[0]; ctx.shadowBlur = 16 + S.kick * 30;
+  ctx.fillStyle = 'rgba(255,255,255,.94)';
+  ctx.fillText(WELCOME, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
 
 /* ═══════════════════════ spotify ═══════════════════════ */
 const SP = { cid:null, token:null, refresh:null, expires:0, timer:null, backoff:3000 };
@@ -1212,16 +1300,16 @@ async function poll() {
 }
 function setNP(data) {
   const sp = S.sp;
-  if (!data || !data.item) { sp.playing = false; el('npSrc').textContent = 'SPOTIFY — NOTHING PLAYING'; return; }
+  if (!data || !data.item) { sp.playing = false; return; }
   const it = data.item, isEp = it.type === 'episode';
   const art = (isEp ? (it.images || (it.show && it.show.images)) : it.album.images) || [];
+  const title = it.name || '';
   const artist = isEp ? (it.show ? it.show.name : '') : (it.artists || []).map(a => a.name).join(', ');
   sp.playing = !!data.is_playing;
   sp.p0 = data.progress_ms || 0; sp.t0 = S.t; sp.dur = it.duration_ms || 0;
-  el('npSrc').textContent = sp.playing ? 'SPOTIFY — NOW PLAYING' : 'SPOTIFY — PAUSED';
   if (it.id !== sp.id) {
     sp.id = it.id;
-    el('npTitle').textContent = it.name || '—';
+    el('npTitle').textContent = title || '—';
     el('npArtist').textContent = artist || '—';
     fitTitle();
     const url = art.length ? art[0].url : '';
@@ -1229,16 +1317,60 @@ function setNP(data) {
     pulse(1.4);
     for (let i = 0; i < 70; i++) spawn();
     S.flash = 0.4;
-    loadBeatGrid(it.id);
+    loadTempo(it.id, title, artist);
   }
 }
 
-/* Ask Spotify for the song's own beat grid so he lands exactly on it.
-   Spotify restricted these endpoints for newer apps, so this degrades:
-   beat grid → tempo only → the room mic → a plain internal clock.        */
-async function loadBeatGrid(id) {
-  S.grid = null; S.gridIdx = 0; S.lastTempoBeat = -1;
-  S.sync = S.mic ? 'mic' : 'clock';
+/* JSONP, because Deezer's API sends no CORS headers. No key, no account. */
+function jsonp(url, ms) {
+  return new Promise((res, rej) => {
+    const cb = 'dz' + Math.floor(Math.random() * 1e9);
+    const s = document.createElement('script');
+    const done = fn => { clearTimeout(t); s.remove(); delete window[cb]; fn(); };
+    const t = setTimeout(() => done(() => rej(new Error('timeout'))), ms || 6000);
+    window[cb] = d => done(() => res(d));
+    s.onerror = () => done(() => rej(new Error('failed')));
+    s.src = url + (url.includes('?') ? '&' : '?') + 'output=jsonp&callback=' + cb;
+    document.head.appendChild(s);
+  });
+}
+
+/* Deezer publishes a BPM for a good chunk of its catalogue. The first match often has
+   none, so we walk a few releases of the same song before giving up. */
+async function deezerBpm(title, artist) {
+  const norm = t => t.toLowerCase().replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9 ]/g, '').trim();
+  const want = norm(title), key = want.slice(0, 12);
+  const pick = d => (d.data || []).filter(x => norm(x.title).startsWith(key));
+  let cands = [];
+  try {
+    cands = pick(await jsonp('https://api.deezer.com/search?q=' +
+      encodeURIComponent('track:"' + title + '" artist:"' + artist + '"') + '&limit=10'));
+  } catch (e) {}
+  if (!cands.length) {
+    try {
+      cands = pick(await jsonp('https://api.deezer.com/search?q=' +
+        encodeURIComponent(title + ' ' + artist) + '&limit=10'));
+    } catch (e) {}
+  }
+  for (const c of cands.slice(0, 6)) {
+    try {
+      const tr = await jsonp('https://api.deezer.com/track/' + c.id);
+      if (tr && tr.bpm > 0) return tr.bpm;
+    } catch (e) {}
+  }
+  return 0;
+}
+
+/* Work out this song's tempo, best source first:
+     1. Spotify's beat grid      — exact, but Spotify locked it for apps made after 2024
+     2. Spotify's tempo          — same lock
+     3. a tempo you tapped once  — remembered per track, forever
+     4. Deezer's published BPM   — free, no key, covers a good share of the catalogue
+     5. 120 BPM                  — so he always dances to something
+   Whatever we land on is locked to the track's playback position, so he stays in step
+   without hearing anything at all.                                                  */
+async function loadTempo(id, title, artist) {
+  S.grid = null; S.gridIdx = 0; S.lastTempoBeat = -1; S.offset = 0;
   if (!id) return;
   const auth = { headers:{ Authorization:'Bearer ' + SP.token } };
   try {
@@ -1246,8 +1378,7 @@ async function loadBeatGrid(id) {
     if (r.ok) {
       const j = await r.json();
       if (j && j.beats && j.beats.length > 8) {
-        S.grid = j.beats.map(b => b.start);
-        S.sync = 'grid';
+        S.grid = j.beats.map(b => b.start); S.sync = 'grid';
         if (j.track && j.track.tempo) S.bpm = foldBpm(j.track.tempo);
         hud(); return;
       }
@@ -1255,10 +1386,20 @@ async function loadBeatGrid(id) {
     const r2 = await fetch('https://api.spotify.com/v1/audio-features/' + id, auth);
     if (r2.ok) {
       const j2 = await r2.json();
-      if (j2 && j2.tempo) { S.bpm = foldBpm(j2.tempo); S.sync = 'tempo'; }
+      if (j2 && j2.tempo) { S.bpm = foldBpm(j2.tempo); S.sync = 'tempo'; hud(); return; }
     }
-  } catch (e) { /* stay on mic */ }
-  hud();
+  } catch (e) {}
+
+  const saved = parseFloat(store.get('bpm.' + id) || '0');
+  if (saved > 40) { S.bpm = saved; S.sync = 'saved'; hud(); return; }
+
+  S.bpm = 120; S.sync = 'default'; hud();               // dance now, refine in a moment
+  const bpm = await deezerBpm(title, artist);
+  if (bpm > 0 && S.sp.id === id) {                      // ignore if the song already changed
+    S.bpm = foldBpm(bpm); S.sync = 'deezer';
+    store.set('bpm.' + id, String(S.bpm));
+    hud();
+  }
 }
 function foldBpm(t) {
   let b = t;
@@ -1369,7 +1510,7 @@ function frame(now) {
     S.phase = b1 > b0 ? Math.min(0.9999, Math.max(0, (pos - b0) / (b1 - b0))) : 0;
     if (b1 > b0) S.bpm += (Math.max(60, Math.min(200, 60 / (b1 - b0))) - S.bpm) * 0.08;
 
-  } else if (S.sync === 'tempo' && S.sp.playing) {
+  } else if (POSLOCK[S.sync] && S.sp.playing) {
     // no grid, but we know the exact tempo and exactly where we are in the track
     const beats = spPos() * (S.bpm / 60);
     const nb = Math.floor(beats);
@@ -1384,7 +1525,8 @@ function frame(now) {
     S.phase += S.dt * (S.bpm / 60) * (idle ? 0.28 : 1);
     if (S.phase >= 1) {
       S.phase -= 1; S.beat++;
-      if (!S.mic && !idle) pulse(1);
+      // the oscillator fires the hit, so flashes stay on the grid even if a beat is missed
+      if (!idle) pulse(S.mic ? Math.min(1.5, 0.8 + S.bass * 1.3) : 1);
     } else if (S.phase < p0) S.beat++;
   }
 
@@ -1417,11 +1559,14 @@ function draw() {
   const g = ctx.createRadialGradient(W / 2, H * 0.5, H * 0.28, W / 2, H * 0.5, H * 0.88);
   g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.42)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  welcome();
 }
 
 /* ═══════════════════════ ui ═══════════════════════ */
 function hud() {
-  const label = { grid:'SPOTIFY BEATS', tempo:'SPOTIFY TEMPO', mic:'ROOM MIC', clock:'INTERNAL CLOCK' }[S.sync];
+  const label = { grid:'SPOTIFY BEATS', tempo:'SPOTIFY TEMPO', deezer:'DEEZER BPM',
+                  saved:'TAPPED BPM', default:'DEFAULT 120', stream:'THIS PC AUDIO',
+                  mic:'ROOM MIC', clock:'INTERNAL CLOCK' }[S.sync] || S.sync;
   const nudge = S.offset ? ' ' + (S.offset > 0 ? '+' : '') + Math.round(S.offset * 1000) + 'MS' : '';
   el('cSrc').innerHTML = 'SYNC <b>' + label + nudge + '</b>';
   el('cBpm').innerHTML = 'BPM <b>' + Math.round(S.bpm) + '</b>';
@@ -1439,16 +1584,26 @@ function poke() {
 window.addEventListener('mousemove', poke);
 window.addEventListener('touchstart', poke);
 
-async function begin(useMic) {
-  if (useMic) { try { await startMic(); } catch (e) { S.mic = false; } }
-  if (S.sync !== 'grid' && S.sync !== 'tempo') S.sync = S.mic ? 'mic' : 'clock';
+async function begin(listen) {
+  if (listen === 'mic') { try { await startMic(); } catch (e) { S.mic = false; } }
+  else if (listen === 'stream') {
+    try { await startStream(); }
+    catch (e) {
+      S.mic = false;
+      el('spMsg').className = 'err';
+      el('spMsg').textContent = e && e.message === 'no-audio'
+        ? 'That share had no audio — pick a tab or screen and tick "share audio".' : '';
+    }
+  }
+  if (S.sync !== 'grid' && !POSLOCK[S.sync]) S.sync = S.mic ? (S.listen || 'mic') : 'clock';
   S.started = true; S.sceneAt = S.t;
   el('start').classList.add('gone');
   hud(); poke();
   try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch (e) {}
 }
-el('go').addEventListener('click', () => begin(true));
-el('nomic').addEventListener('click', () => begin(false));
+el('go').addEventListener('click', () => begin(null));
+el('useMic').addEventListener('click', () => begin('mic'));
+el('useStream').addEventListener('click', () => begin('stream'));
 el('sens').addEventListener('input', e => { S.sens = parseFloat(e.target.value); });
 
 el('redir').value = REDIRECT;
@@ -1472,7 +1627,7 @@ el('spConnect').addEventListener('click', async () => {
   try {
     await spConnect(cid);
     msg.textContent = 'Connected. ♪';
-    setTimeout(() => { closeSetup(); if (!S.started) begin(true); }, 900);
+    setTimeout(() => { closeSetup(); if (!S.started) begin(null); }, 900);
   } catch (e) { msg.className = 'err'; msg.textContent = e.message || 'Could not connect.'; }
 });
 el('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') el('spConnect').click(); });
@@ -1495,16 +1650,21 @@ window.addEventListener('keydown', e => {
   else if (k === '\\') { S.offset = 0; hud(); poke(); }
   else if (e.code === 'Space') {
     e.preventDefault();
-    if (!S.started) { begin(true); return; }
+    if (!S.started) { begin(null); return; }
     S.taps.push(S.t);
     if (S.taps.length > 5) S.taps.shift();
     if (S.taps.length > 1) {
       const gaps = [];
       for (let i = 1; i < S.taps.length; i++) gaps.push(S.taps[i] - S.taps[i - 1]);
       const avg = gaps.reduce((a, c) => a + c, 0) / gaps.length;
-      if (avg > 0.25 && avg < 2) S.bpm = 60 / avg;
+      if (avg > 0.25 && avg < 2) {
+        S.bpm = 60 / avg;
+        if (S.sp.id) { store.set('bpm.' + S.sp.id, String(S.bpm)); S.sync = 'saved'; }
+      }
     }
-    S.phase = 0; pulse(1.1); hud(); poke();
+    if (POSLOCK[S.sync] && S.sp.playing) S.offset -= (spPos() * (S.bpm / 60)) % 1 * (60 / S.bpm);
+    else S.phase = 0;
+    pulse(1.1); hud(); poke();
   }
 });
 
