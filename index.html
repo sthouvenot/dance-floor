@@ -175,6 +175,19 @@
         <button class="mini" id="plGo">LOAD</button>
       </div>
       <div id="plMsg" style="font-size:12.5px;color:#8ee9ad;min-height:1.2em;margin-top:8px"></div>
+      <div id="plMiss" style="font-size:12px;color:#a294c4;line-height:1.7;margin-top:8px;
+        max-height:150px;overflow:auto"></div>
+    </div>
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)">
+      <h2 style="font-size:16px">Set the tempo by hand</h2>
+      <p class="lead" style="margin-bottom:10px">Know the BPM, or just looked it up? Type it here and
+        it's saved against the track that's playing — for good. Tapping <b>space</b> on the beat does
+        the same thing without the typing.</p>
+      <div class="uri">
+        <input type="text" id="bpmVal" placeholder="e.g. 128" spellcheck="false" inputmode="decimal">
+        <button class="mini go" id="bpmSet">SET</button>
+      </div>
+      <div id="bpmMsg" style="font-size:12.5px;color:#8ee9ad;min-height:1.2em;margin-top:8px"></div>
     </div>
     <div class="row" style="margin-top:18px;justify-content:flex-start">
       <button class="ghost" id="closeSetup">back</button>
@@ -1708,10 +1721,9 @@ async function deezerBpm(title, artist) {
       seen.add(d.id); cands.push(d);
     }
   }
-  // exact-title releases first — they're likeliest to be the version being played
-  cands.sort((a, b) => (norm(a.title) === base ? -1 : 0) - (norm(b.title) === base ? -1 : 0));
+  // don't reorder — Deezer's own relevance ranking finds the release with a BPM sooner
 
-  for (const c of cands.slice(0, 10)) {
+  for (const c of cands.slice(0, 22)) {
     const tr = await dzGet('https://api.deezer.com/track/' + c.id);
     if (tr && tr.bpm > 0) return tr.bpm;
   }
@@ -1738,14 +1750,16 @@ async function preloadPlaylist(url, onProgress) {
     next = j.next;
   }
   let found = 0, already = 0;
+  const missing = [];
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
     if (store.get('bpm.' + t.id)) { already++; onProgress(i + 1, tracks.length, found + already); continue; }
     const bpm = await deezerBpm(t.name, t.artist);
     if (bpm > 0) { store.set('bpm.' + t.id, String(foldBpm(bpm))); found++; }
+    else missing.push(t.artist.split(',')[0] + ' — ' + t.name);
     onProgress(i + 1, tracks.length, found + already);
   }
-  return { total: tracks.length, known: found + already };
+  return { total: tracks.length, known: found + already, missing };
 }
 
 /* Work out this song's tempo, best source first:
@@ -2078,6 +2092,17 @@ el('spConnect').addEventListener('click', async () => {
 });
 el('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') el('spConnect').click(); });
 el('quickConnect').addEventListener('click', () => el('spConnect').click());
+el('bpmSet').addEventListener('click', () => {
+  const m = el('bpmMsg'), v = parseFloat(el('bpmVal').value);
+  if (!(v > 40 && v < 260)) { m.style.color = '#ff8f9e'; m.textContent = 'Enter a number between 40 and 260.'; return; }
+  if (!S.sp.id) { m.style.color = '#ff8f9e'; m.textContent = 'Nothing playing on Spotify to attach it to.'; return; }
+  S.bpm = foldBpm(v); S.sync = 'saved'; S.offset = 0;
+  store.set('bpm.' + S.sp.id, String(S.bpm));
+  m.style.color = '#8ee9ad';
+  m.textContent = 'Locked to ' + Math.round(S.bpm) + ' BPM. If he lands off the beat, tap space once.';
+  hud();
+});
+el('bpmVal').addEventListener('keydown', e => { if (e.key === 'Enter') el('bpmSet').click(); });
 el('plGo').addEventListener('click', async () => {
   const m = el('plMsg'), url = el('plUrl').value.trim();
   if (!S.sp.on) { m.style.color = '#ff8f9e'; m.textContent = 'Connect Spotify first.'; return; }
@@ -2088,9 +2113,11 @@ el('plGo').addEventListener('click', async () => {
     const res = await preloadPlaylist(url, (done, total, known) => {
       m.textContent = 'Checked ' + done + ' of ' + total + ' \u2014 ' + known + ' tempos ready';
     });
-    const miss = res.total - res.known;
+    const miss = res.missing || [];
     m.textContent = res.known + ' of ' + res.total + ' tracks have a tempo' +
-      (miss ? '. The other ' + miss + ' need one tap of space while they play.' : '. All set.');
+      (miss.length ? '. These still need one — tap space while they play, or type the BPM below:' : '. All set.');
+    el('plMiss').innerHTML = miss.length
+      ? miss.map(x => '• ' + x.replace(/[<>&]/g, '')).join('<br>') : '';
   } catch (e) {
     m.style.color = '#ff8f9e'; m.textContent = e.message || 'Could not read that playlist.';
   }
