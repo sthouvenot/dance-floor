@@ -393,12 +393,60 @@ function lightCones(xs, colour, from) {
   ctx.restore();
 }
 
+/* Each scene carries a sign in its own world — a stadium LED board, a banner on the
+   building, a storefront awning — so you can read what he pulled off without a caption. */
+function drawSign(sg) {
+  if (!sg) return;
+  const size = Math.min(W * 0.0265, H * 0.037);
+  const subSize = size * 0.46;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `900 ${size}px Helvetica,Arial,sans-serif`;
+  if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${size * 0.05}px`;
+  const w1 = ctx.measureText(sg.t).width;
+  ctx.font = `700 ${subSize}px Helvetica,Arial,sans-serif`;
+  if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${subSize * 0.12}px`;
+  const w2 = sg.s ? ctx.measureText(sg.s).width : 0;
+
+  const pad = size * 0.85;
+  const bw = Math.max(w1, w2) + pad * 2, bh = size * (sg.s ? 3.1 : 2.0);
+  const cx = W * sg.x, cy = H * (sg.y || 0.36);
+  ctx.translate(cx, cy);
+  if (sg.tilt) ctx.rotate(sg.tilt);
+
+  // post holding it up, for the ones that read as signage
+  if (sg.post) {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(-size * 0.09, bh / 2, size * 0.18, H * 0.10);
+  }
+  ctx.fillStyle = sg.bg || 'rgba(8,6,16,.86)';
+  rr(ctx, -bw / 2, -bh / 2, bw, bh, bh * 0.16); ctx.fill();
+  ctx.strokeStyle = sg.br || 'rgba(255,255,255,.35)';
+  ctx.lineWidth = Math.max(2, size * 0.10); ctx.stroke();
+
+  ctx.shadowColor = sg.gl || sg.br || '#fff';
+  ctx.shadowBlur = 14 + S.kick * 26;
+  ctx.fillStyle = sg.fg || '#fff';
+  ctx.font = `900 ${size}px Helvetica,Arial,sans-serif`;
+  if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${size * 0.05}px`;
+  ctx.fillText(sg.t, 0, sg.s ? -size * 0.55 : 0);
+  ctx.shadowBlur = 0;
+  if (sg.s) {
+    ctx.fillStyle = sg.sf || 'rgba(255,255,255,.7)';
+    ctx.font = `700 ${subSize}px Helvetica,Arial,sans-serif`;
+    if (ctx.letterSpacing !== undefined) ctx.letterSpacing = `${subSize * 0.12}px`;
+    ctx.fillText(sg.s, 0, size * 0.72);
+  }
+  ctx.restore();
+}
+
 const SCENES = [
 
 /* 1 ─ FIFA backed down on water bottles ─────────────── */
 {
   name:'WORLD CUP WATER', kind:'bottle', pal:['#38e08a','#eaffff','#7fd8ff','#ffd400'],
   cap:'MADE FIFA BACK DOWN', sub:'FANS CAN BRING THEIR OWN WATER INTO WORLD CUP STADIUMS · JUNE 2026',
+  sign:{ t:'BRING YOUR OWN WATER', s:'FIFA BACKED DOWN · JUNE 2026', x:0.20, y:0.34, fg:'#eaffff', br:'#38e08a', bg:'rgba(3,32,26,.88)' },
   draw() {
     grad('#04263a', '#01111b');
     const hz = H * 0.66;
@@ -440,6 +488,7 @@ const SCENES = [
 {
   name:'RENT FROZEN', kind:'flake', pal:['#7fe9ff','#ffffff','#bcd9ff','#8fb6ff'],
   cap:'RENT FROZEN', sub:'0% INCREASE ON A MILLION STABILIZED APARTMENTS · JUNE 2026',
+  sign:{ t:'RENT FROZEN', s:'0% ON A MILLION APARTMENTS', x:0.795, y:0.32, fg:'#eaf9ff', br:'#7fe9ff', bg:'rgba(6,26,48,.88)' },
   draw() {
     grad('#0d2246', '#040a18');
     const facade = cache('rentwin', W, H * 0.78, (g, w, h) => {
@@ -482,6 +531,7 @@ const SCENES = [
 {
   name:'FREE THE ICE CREAM', kind:'sprinkle', pal:['#ff6fae','#ffd76e','#7ee8d5','#fff3c4'],
   cap:'FREED THE ICE CREAM', sub:'SCRAPPED THE ICE CREAM PERMIT — ONE OF 50+ SMALL-BUSINESS FIXES · JULY 2026',
+  sign:{ t:'ICE CREAM, NO PERMIT', s:'RED TAPE CUT FOR SMALL SHOPS', x:0.205, y:0.30, fg:'#4a1330', br:'#ff6fae', bg:'rgba(255,247,235,.94)', sf:'rgba(74,19,48,.72)', post:1 },
   draw() {
     grad('#ff9fd0', '#3fc0dd');
     // sun
@@ -536,6 +586,7 @@ const SCENES = [
 {
   name:'KNICKS', kind:'ticker', pal:['#F58426', '#006BB6', '#ffffff', '#ffd400'],
   cap:'KNICKS WON IT ALL', sub:'FIRST TITLE SINCE 1973 — NOT THE WORLD CUP, BUT WE’LL TAKE IT · JUNE 2026',
+  sign:{ t:'KNICKS: CHAMPIONS', s:'FIRST TITLE SINCE 1973', x:0.795, y:0.30, fg:'#fff', br:'#F58426', bg:'rgba(0,32,72,.92)' },
   draw() {
     grad('#0b1c3a', '#04070f');
     const hz = H * 0.60;
@@ -597,6 +648,7 @@ const SCENES = [
 {
   name:'ELECTION NIGHT', kind:'confetti', pal:['#ffd400','#ff2fd0','#00e5ff','#b6ff2f'],
   cap:'BEAT CUOMO. TWICE.', sub:'PRIMARY, JUNE 2025 · GENERAL ELECTION, NOVEMBER 2025',
+  sign:{ t:'MAMDANI WINS', s:'BEAT CUOMO TWICE, 2025', x:0.795, y:0.30, fg:'#12002b', br:'#ffd400', bg:'rgba(255,212,0,.94)', sf:'rgba(18,0,43,.72)' },
   draw() {
     grad('#1b0640', '#06010f');
     lightCones([0.14, 0.5, 0.86], '#ffd400', -H * 0.05);
@@ -645,6 +697,7 @@ const SCENES = [
 {
   name:'FREE CHILDCARE', kind:'bubble', pal:['#ffb02e','#ff6f91','#3ec6ff','#8ee36b'],
   cap:'FREE CHILDCARE', sub:'$1.7 BILLION PROGRAM — FIRST 2,000 TWO-YEAR-OLDS ENROLLING NOW · 2026',
+  sign:{ t:'FREE CHILDCARE', s:'FROM AGE TWO · $1.7 BILLION', x:0.215, y:0.35, fg:'#2b1a05', br:'#ffb02e', bg:'rgba(255,250,235,.95)', sf:'rgba(43,26,5,.7)', post:1 },
   draw() {
     grad('#ffe9c9', '#9fd7f2');
     // crayon sun
@@ -694,6 +747,7 @@ const SCENES = [
 {
   name:'CITY GROCERIES', kind:'confetti', pal:['#ff5e4d','#ffc93c','#5ecb6b','#ff9f43'],
   cap:'CITY-OWNED GROCERIES', sub:'FIRST SITE NAMED: LA MARQUETA, EAST HARLEM · APRIL 2026',
+  sign:{ t:'CITY-OWNED GROCERY', s:'LA MARQUETA, EAST HARLEM', x:0.20, y:0.55, fg:'#fff5e0', br:'#ffb02e', bg:'rgba(40,12,20,.9)' },
   draw() {
     grad('#2a1330', '#0b0410');
     const hz = H * 0.72;
@@ -755,6 +809,7 @@ const SCENES = [
 {
   name:'FAIR FARES', kind:'confetti', pal:['#0039A6','#FF6319','#FCCC0A','#00933C'],
   cap:'FAIR FARES FOR 1.3 MILLION', sub:'HALF-PRICE TRANSIT ELIGIBILITY UP FROM 960,000 · JUNE 2026',
+  sign:{ t:'HALF-PRICE FARES', s:'FOR 1.3 MILLION RIDERS', x:0.20, y:0.33, fg:'#fff', br:'#FCCC0A', bg:'rgba(0,42,110,.93)' },
   draw() {
     grad('#101a2e', '#04060d');
     const hz = H * 0.78;
@@ -809,6 +864,7 @@ const SCENES = [
 {
   name:'SAFEST ON RECORD', kind:'confetti', pal:['#7ee8a0','#8fd8ff','#ffe08a','#c9a7ff'],
   cap:'FEWEST SHOOTINGS ON RECORD', sub:'MURDERS DOWN 25.6% IN THE FIRST HALF OF 2026',
+  sign:{ t:'SHOOTINGS: RECORD LOW', s:'MURDERS DOWN 25.6%', x:0.795, y:0.35, fg:'#eafff2', br:'#7ee8a0', bg:'rgba(4,26,20,.9)' },
   draw() {
     grad('#0a1c2e', '#03060e');
     const hz = H * 0.74;
@@ -1566,6 +1622,7 @@ function frame(now) {
 function draw() {
   ctx.clearRect(0, 0, W, H);
   SC().draw();
+  drawSign(SC().sign);
   if (S.sceneFade < 1) {                       // quick white wipe between scenes
     ctx.fillStyle = `rgba(255,255,255,${(1 - S.sceneFade) * 0.5})`;
     ctx.fillRect(0, 0, W, H);
