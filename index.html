@@ -1940,7 +1940,7 @@ function frame(now) {
   stepParts(S.dt);
   paintNP();
 
-  if (S.auto && S.t - S.sceneAt > 24) nextScene(1);
+  if (S.auto && S.t - S.sceneAt > 6) nextScene(1);     // four times as often
 
   draw();
   requestAnimationFrame(frame);
