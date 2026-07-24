@@ -165,6 +165,17 @@
     <div class="uri"><input type="text" id="clientId" placeholder="client id" spellcheck="false"><button class="mini go" id="spConnect">CONNECT</button></div>
     </div>
     <div id="spMsg"></div>
+    <div id="preWrap" style="margin-top:20px;padding-top:18px;border-top:1px solid rgba(255,255,255,.12)">
+      <h2 style="font-size:16px">Prepare a playlist</h2>
+      <p class="lead" style="margin-bottom:10px">Do this before the party. It looks up the tempo of every
+        track in a public playlist and stores it on this device, so nothing falls back to a guess mid-song.
+        Anything it can't find, play once and tap <b>space</b> on the beat — that's remembered too.</p>
+      <div class="uri">
+        <input type="text" id="plUrl" placeholder="paste a Spotify playlist link" spellcheck="false">
+        <button class="mini" id="plGo">LOAD</button>
+      </div>
+      <div id="plMsg" style="font-size:12.5px;color:#8ee9ad;min-height:1.2em;margin-top:8px"></div>
+    </div>
     <div class="row" style="margin-top:18px;justify-content:flex-start">
       <button class="ghost" id="closeSetup">back</button>
       <button class="ghost" id="forget">forget this device</button>
@@ -1633,6 +1644,28 @@ function setNP(data) {
   }
 }
 
+/* Deezer allows about 50 calls per 5 seconds per IP. Blow through that and it answers
+   with a quota error, which is what made lookups work once and then quietly stop. Every
+   request goes through this queue: spaced out, and retried after a pause if we're told off. */
+let dzChain = Promise.resolve(), dzNext = 0;
+function dzGet(url, tries) {
+  dzChain = dzChain.then(async () => {
+    const wait = Math.max(0, dzNext - performance.now());
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    dzNext = performance.now() + 135;
+  });
+  return dzChain.then(async () => {
+    for (let i = 0; i <= (tries === undefined ? 2 : tries); i++) {
+      let d = null;
+      try { d = await jsonp(url); } catch (e) { d = null; }
+      if (d && !(d.error && (d.error.code === 4 || /quota/i.test(d.error.message || '')))) return d;
+      await new Promise(r => setTimeout(r, 1300 + i * 900));   // quota hit — breathe
+      dzNext = performance.now() + 135;
+    }
+    return null;
+  });
+}
+
 /* JSONP, because Deezer's API sends no CORS headers. No key, no account. */
 function jsonp(url, ms) {
   return new Promise((res, rej) => {
@@ -1651,26 +1684,68 @@ function jsonp(url, ms) {
    none, so we walk a few releases of the same song before giving up. */
 async function deezerBpm(title, artist) {
   const norm = t => t.toLowerCase().replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9 ]/g, '').trim();
-  const want = norm(title), key = want.slice(0, 12);
-  const pick = d => (d.data || []).filter(x => norm(x.title).startsWith(key));
-  let cands = [];
-  try {
-    cands = pick(await jsonp('https://api.deezer.com/search?q=' +
-      encodeURIComponent('track:"' + title + '" artist:"' + artist + '"') + '&limit=10'));
-  } catch (e) {}
-  if (!cands.length) {
-    try {
-      cands = pick(await jsonp('https://api.deezer.com/search?q=' +
-        encodeURIComponent(title + ' ' + artist) + '&limit=10'));
-    } catch (e) {}
+  const base = norm(title);                       // "Cola (Club Mix)" -> "cola"
+  const key = base.slice(0, 12);
+  const firstArtist = (artist || '').split(/,|&|feat\.?|ft\.?/i)[0].trim();
+
+  // Cast a wide net: different phrasings surface different releases, and only some
+  // releases carry a BPM. Dedupe by id, then walk them until one answers.
+  const queries = [
+    'track:"' + title + '" artist:"' + firstArtist + '"',
+    title + ' ' + firstArtist,
+    'track:"' + base + '" artist:"' + firstArtist + '"',
+    base + ' ' + firstArtist
+  ];
+  const seen = new Set(), cands = [];
+  for (const q of queries) {
+    if (cands.length > 24) break;
+    const r = await dzGet('https://api.deezer.com/search?q=' + encodeURIComponent(q) + '&limit=25');
+    if (!r) continue;
+    for (const d of (r.data || [])) {
+      if (seen.has(d.id)) continue;
+      const nt = norm(d.title);
+      if (!nt.startsWith(key) && !base.startsWith(nt.slice(0, 12))) continue;
+      seen.add(d.id); cands.push(d);
+    }
   }
-  for (const c of cands.slice(0, 6)) {
-    try {
-      const tr = await jsonp('https://api.deezer.com/track/' + c.id);
-      if (tr && tr.bpm > 0) return tr.bpm;
-    } catch (e) {}
+  // exact-title releases first — they're likeliest to be the version being played
+  cands.sort((a, b) => (norm(a.title) === base ? -1 : 0) - (norm(b.title) === base ? -1 : 0));
+
+  for (const c of cands.slice(0, 10)) {
+    const tr = await dzGet('https://api.deezer.com/track/' + c.id);
+    if (tr && tr.bpm > 0) return tr.bpm;
   }
   return 0;
+}
+
+/* Pre-load a whole playlist before the party so nothing lands on the 120 default.
+   Public playlists need no extra permission beyond the token we already hold. */
+async function preloadPlaylist(url, onProgress) {
+  const m = String(url).match(/playlist[/:]([A-Za-z0-9]+)/);
+  if (!m) throw new Error('That doesn\u2019t look like a Spotify playlist link.');
+  const id = m[1];
+  const auth = { headers: { Authorization: 'Bearer ' + SP.token } };
+  let next = 'https://api.spotify.com/v1/playlists/' + id + '/tracks?limit=100&fields=next,items(track(id,name,artists(name)))';
+  const tracks = [];
+  while (next && tracks.length < 400) {
+    const r = await fetch(next, auth);
+    if (!r.ok) throw new Error(r.status === 404 ? 'Playlist not found, or it isn\u2019t public.' : 'Spotify said no (' + r.status + ').');
+    const j = await r.json();
+    for (const it of (j.items || [])) {
+      const t = it && it.track;
+      if (t && t.id) tracks.push({ id: t.id, name: t.name, artist: (t.artists || []).map(a => a.name).join(', ') });
+    }
+    next = j.next;
+  }
+  let found = 0, already = 0;
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    if (store.get('bpm.' + t.id)) { already++; onProgress(i + 1, tracks.length, found + already); continue; }
+    const bpm = await deezerBpm(t.name, t.artist);
+    if (bpm > 0) { store.set('bpm.' + t.id, String(foldBpm(bpm))); found++; }
+    onProgress(i + 1, tracks.length, found + already);
+  }
+  return { total: tracks.length, known: found + already };
 }
 
 /* Work out this song's tempo, best source first:
@@ -2003,6 +2078,24 @@ el('spConnect').addEventListener('click', async () => {
 });
 el('clientId').addEventListener('keydown', e => { if (e.key === 'Enter') el('spConnect').click(); });
 el('quickConnect').addEventListener('click', () => el('spConnect').click());
+el('plGo').addEventListener('click', async () => {
+  const m = el('plMsg'), url = el('plUrl').value.trim();
+  if (!S.sp.on) { m.style.color = '#ff8f9e'; m.textContent = 'Connect Spotify first.'; return; }
+  if (!url) { m.style.color = '#ff8f9e'; m.textContent = 'Paste a playlist link first.'; return; }
+  m.style.color = '#8ee9ad'; m.textContent = 'Reading the playlist\u2026';
+  el('plGo').textContent = 'WORKING';
+  try {
+    const res = await preloadPlaylist(url, (done, total, known) => {
+      m.textContent = 'Checked ' + done + ' of ' + total + ' \u2014 ' + known + ' tempos ready';
+    });
+    const miss = res.total - res.known;
+    m.textContent = res.known + ' of ' + res.total + ' tracks have a tempo' +
+      (miss ? '. The other ' + miss + ' need one tap of space while they play.' : '. All set.');
+  } catch (e) {
+    m.style.color = '#ff8f9e'; m.textContent = e.message || 'Could not read that playlist.';
+  }
+  el('plGo').textContent = 'LOAD';
+});
 el('showAdv').addEventListener('click', () => {
   el('quickWrap').style.display = 'none';
   el('advWrap').style.display = 'block';
@@ -2047,6 +2140,7 @@ window.addEventListener('keydown', e => {
   }
 });
 
+window.__dz = deezerBpm;   // exposed so the tempo lookup can be tested
 window.__party = S;
 requestAnimationFrame(frame);
 })();
