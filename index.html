@@ -247,24 +247,33 @@
 
 <div class="overlay gone" id="share">
   <div class="card">
-    <h2>Let it hear the music — no microphone</h2>
-    <p class="lead">Chrome can hand this page the sound your computer is already playing. The only
-      way browsers allow that is through the screen-share picker, so it looks like you're sharing a
-      screen — but the picture is thrown away the instant it arrives. Only the sound is used, and it
-      never leaves this page.</p>
-    <ol>
-      <li>Press <b>Choose what to share</b> below — Chrome's picker opens.</li>
-      <li>Spotify in a <b>browser tab</b> → pick <b>Chrome Tab</b>, click your Spotify tab, and switch
-        on <b>Also share tab audio</b> (bottom-left of the picker).</li>
-      <li>Spotify as the <b>desktop app</b> → pick <b>Entire Screen</b>, then switch on
-        <b>Also share system audio</b>.</li>
-      <li>Press <b>Share</b>. If the toggle was off there'll be no sound — just try again.</li>
-    </ol>
+    <h2>Let it hear the music</h2>
+    <p class="lead">Cleanest way first: many computers have a <b>loopback input</b> — an input wired
+      to whatever the machine is playing. If this one does, it's a normal microphone permission and
+      no screen sharing at all. Press the button and I'll look.</p>
     <div class="row" style="justify-content:flex-start">
-      <button class="mini go" id="shareGo" style="padding:15px 26px;font-size:14px">CHOOSE WHAT TO SHARE</button>
+      <button class="mini go" id="findInputs" style="padding:15px 26px;font-size:14px">USE THIS COMPUTER'S SOUND</button>
       <button class="ghost" id="shareCancel">back</button>
     </div>
-    <div id="shareMsg"></div>
+    <div id="inputWrap" style="display:none;margin-top:16px">
+      <p class="lead" id="inputHint" style="margin-bottom:8px"></p>
+      <div class="uri">
+        <select id="inputSel" style="flex:1;min-width:0;background:rgba(255,255,255,.07);
+          border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:10px;padding:11px 13px;font:13px inherit"></select>
+        <button class="mini go" id="useInput">LISTEN</button>
+      </div>
+    </div>
+    <div id="shareAlt" style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,.12)">
+      <p class="lead" style="margin-bottom:10px">No loopback on this machine? Then share the audio of the
+        tab Spotify plays in. Same result, but Chrome insists on its share picker to do it.</p>
+      <ol style="margin-bottom:12px">
+        <li>Press <b>Share a tab's audio</b> — the picker opens on the tab list.</li>
+        <li>Click your <b>Spotify tab</b>, switch on <b>Also share tab audio</b>, press Share.</li>
+        <li>Desktop Spotify instead? Choose <b>Entire Screen</b> and <b>share system audio</b>.</li>
+      </ol>
+      <button class="mini" id="shareGo" style="padding:13px 22px">SHARE A TAB'S AUDIO</button>
+    </div>
+    <div id="shareMsg" style="margin-top:12px"></div>
   </div>
 </div>
 
@@ -367,13 +376,36 @@ async function startMic() {
   S.listen = 'mic';
 }
 
-/* Reads the audio Chrome is playing rather than the room. At a loud party this is the
-   difference between a clean signal and a wall of noise — and it needs no microphone.
-   Chrome only offers audio when sharing a tab or a whole screen, so we ask for video
-   too and throw the video track away immediately. */
+/* Names Windows/macOS give to a loopback input — an input wired to what the machine
+   is playing. If one exists we can listen to the music with a plain mic permission and
+   no screen sharing at all, which is far less strange than the share picker. */
+const LOOPBACK = /stereo ?mix|what ?u ?hear|what you hear|loopback|vb-?audio|cable output|voicemeeter|blackhole|soundflower|monitor of|wave ?out|mixage st/i;
+
+/* Device labels stay blank until the user has granted audio once, so we ask first,
+   then look. The prompt is the ordinary microphone one. */
+async function listInputs() {
+  const probe = await navigator.mediaDevices.getUserMedia({ audio:true });
+  probe.getTracks().forEach(t => t.stop());
+  const all = await navigator.mediaDevices.enumerateDevices();
+  return all.filter(d => d.kind === 'audioinput' && d.deviceId !== 'communications')
+            .map(d => ({ id:d.deviceId, label:d.label || 'Input', loop:LOOPBACK.test(d.label || '') }));
+}
+
+async function startInput(deviceId, isLoop) {
+  attach(await navigator.mediaDevices.getUserMedia({
+    audio:{ deviceId: deviceId ? { exact: deviceId } : undefined,
+            echoCancellation:false, noiseSuppression:false, autoGainControl:false } }));
+  S.listen = isLoop ? 'stream' : 'mic';
+}
+
+/* Fallback: capture a tab's audio. The constraints open Chrome's picker straight on the
+   tab list with system audio available, rather than dumping the user on "Entire Screen". */
 async function startStream() {
   const s = await navigator.mediaDevices.getDisplayMedia({
-    video:true, audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    video:{ displaySurface:'browser' },
+    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false },
+    systemAudio:'include', selfBrowserSurface:'exclude', surfaceSwitching:'include'
+  });
   s.getVideoTracks().forEach(t => t.stop());
   if (!s.getAudioTracks().length) throw new Error('no-audio');
   attach(s);
@@ -2179,6 +2211,43 @@ function openShare() {
   el('shareMsg').className = ''; el('shareMsg').textContent = '';
 }
 el('shareCancel').addEventListener('click', () => el('share').classList.add('gone'));
+
+el('findInputs').addEventListener('click', async () => {
+  const m = el('shareMsg'); m.className = ''; m.textContent = 'Looking for an input\u2026';
+  let list;
+  try { list = await listInputs(); }
+  catch (e) { m.className = 'err'; m.textContent = 'Audio permission was declined, so I can\u2019t see the inputs. Share a tab instead, below.'; return; }
+  const sel = el('inputSel');
+  sel.innerHTML = '';
+  list.sort((a, b) => (b.loop ? 1 : 0) - (a.loop ? 1 : 0));
+  for (const d of list) {
+    const o = document.createElement('option');
+    o.value = d.id; o.dataset.loop = d.loop ? '1' : '';
+    o.textContent = (d.loop ? '\u2605 ' : '') + d.label + (d.loop ? '  (this computer\u2019s sound)' : '');
+    sel.appendChild(o);
+  }
+  el('inputWrap').style.display = 'block';
+  const loop = list.find(d => d.loop);
+  el('inputHint').textContent = loop
+    ? 'Found one: ' + loop.label + '. That is this computer\u2019s own output — press Listen and you\u2019re done.'
+    : 'No loopback input on this machine, so these are microphones. A mic works if the speakers are close; otherwise share a tab below.';
+  m.textContent = '';
+  if (loop) { sel.value = loop.id; el('shareAlt').style.opacity = '.55'; }
+});
+
+el('useInput').addEventListener('click', async () => {
+  const m = el('shareMsg'), sel = el('inputSel');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  try {
+    await startInput(opt.value, !!opt.dataset.loop);
+    m.className = ''; m.textContent = 'Listening. \u266a';
+    el('share').classList.add('gone');
+    if (!S.started) begin(null); else { S.sync = S.listen; hud(); }
+  } catch (e) {
+    m.className = 'err'; m.textContent = 'That input wouldn\u2019t open. Try another, or share a tab.';
+  }
+});
 el('shareGo').addEventListener('click', async () => {
   const m = el('shareMsg');
   m.className = ''; m.textContent = 'Opening Chrome\u2019s picker\u2026';
