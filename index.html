@@ -188,6 +188,9 @@
        so there is no fact to caption. display:none also beats the inline
        opacity setFact() writes. */
     #fact { display:none; }
+    /* The sync chip is desk furniture. On a phone he either dances or he does
+       not, which says the same thing without the label. */
+    #status { display:none; }
     #corner { right:10px; left:auto; bottom:auto; top:10px; }
   }
 
@@ -404,8 +407,37 @@ async function startStream() {
 /* Are we actually hearing anything right now? */
 const hearing = () => !!analyser && (S.t - S.lastSignal) < 1.5;
 
+/* Audible is not the same as rhythmic. Room tone and handling noise clear the
+   loudness gate, and broadband noise even trips spectral flux often enough to
+   fake a stream of onsets, which had him dancing to a quiet room.
+
+   What noise cannot fake is regularity. Music lands onsets at a steady spacing;
+   noise scatters them. So judge the spread of the recent intervals against their
+   median and only call it a groove when the hits are actually periodic. */
+function beatQuality() {
+  const iv = S.intervals;
+  if (iv.length < 5) return 0;
+  const sorted = [...iv].sort((x, y) => x - y);
+  const med = sorted[sorted.length >> 1];
+  if (!(med > 0)) return 0;
+  // Mean absolute deviation from the median, as a fraction of it. Tight on a real
+  // beat, wide on scattered hits. Fold in half/double time so a detector that
+  // catches every other kick still reads as steady.
+  let dev = 0;
+  for (const g of iv) {
+    const r = g / med;
+    const f = Math.min(Math.abs(r - 1), Math.abs(r - 0.5), Math.abs(r - 2));
+    dev += f;
+  }
+  return 1 - Math.min(1, (dev / iv.length) / 0.32);
+}
+
+const grooving = () => hearing()
+  && (S.t - S.lastBeat) < 2.0
+  && beatQuality() > 0.5;
+
 /* One clock only: the sound this computer is playing. */
-function pickSource() { return hearing() ? 'listen' : 'none'; }
+function pickSource() { return grooving() ? 'listen' : 'none'; }
 
 function readAudio() {
   analyser.getByteFrequencyData(freq);
@@ -443,6 +475,10 @@ function readAudio() {
     S.dbg.onsets++; S.dbg.lastOnset = S.t;
     onset(flux);
   }
+
+  // Once the beat has clearly gone, drop the tempo history. Otherwise the old
+  // intervals sit there and the next stray noise re-starts him instantly.
+  if (S.intervals.length && S.t - S.lastBeat > 2.5) S.intervals.length = 0;
 }
 
 function onset(strength) {
@@ -2392,7 +2428,7 @@ function draw() {
   if (SOLO) {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
-    drawDancer(W / 2, H * 0.74, Math.min(W, H) * 0.42, S.beat + S.phase, S.energy);
+    drawDancer(W / 2, H * 0.72, Math.min(W, H) * 0.25, S.beat + S.phase, S.energy);
     if (S.flash > 0.01) { ctx.fillStyle = `rgba(255,255,255,${S.flash * 0.5})`; ctx.fillRect(0, 0, W, H); }
     ctx.restore();
     return;
@@ -2517,7 +2553,12 @@ function drawDebug() {
   const st = el('dState');
   if (!analyser) { st.textContent = '✗ no audio attached'; st.className = 'bad'; }
   else if (!live) { st.textContent = '✗ attached but SILENT. wrong input or muted'; st.className = 'bad'; }
-  else { st.textContent = '✓ hearing sound'; st.className = 'good'; }
+  else if (!grooving()) {
+    st.textContent = '~ hearing sound but no steady beat (groove ' +
+      beatQuality().toFixed(2) + ', needs 0.50)';
+    st.className = 'bad';
+  }
+  else { st.textContent = '✓ locked to the beat (groove ' + beatQuality().toFixed(2) + ')'; st.className = 'good'; }
 
   const lvl = Math.min(1, S.energy * 1.4);
   el('dLevel').style.width = (lvl * 100).toFixed(0) + '%';
