@@ -352,7 +352,7 @@ const S = {
   lastBeat:-9, intervals:[], taps:[], parts:[], head:0,
   tint:null,
   sync:'clock', src:'clock', still:true, offset:0, grid:null, gridIdx:0, lastTempoBeat:-1, lastBpmSave:-9,
-  lastSignal:-9, hearSince:-9, wasHearing:false, locked:false, punch:0, lastSample:0,
+  lastSignal:-9, hearSince:-9, wasHearing:false, locked:false, punch:0,
   srcLabel:'', rate:0, fps:0,
   dbg:{ flux:0, thresh:0, onsets:0, lastOnset:-9, scope:[], level:0 },
   sp:{ on:false, playing:false, id:null, p0:0, t0:0, dur:0, art:'' }
@@ -375,6 +375,18 @@ const hist = [], fluxHist = [];
 
 let audioCtx = null, curStream = null;
 
+/* Safari 17+ lets a page say what it is doing with audio. Without this, holding
+   the microphone puts iOS into a session that interrupts everything else, so
+   starting a song in Spotify and coming back here killed the song. Say it early
+   and say it again on the way back in, since the session resets around a
+   backgrounded tab. Ignored where the API does not exist. */
+function sessionMixable() {
+  try {
+    const s = navigator.audioSession;
+    if (s) s.type = 'play-and-record';
+  } catch (e) {}
+}
+
 /* Changing the audio route — speaker to phone earpiece, headphones in or out,
    a Bluetooth device connecting — tears this down in ways that are silent from
    here. The OS suspends the AudioContext, and on phones it often ends or mutes
@@ -386,14 +398,7 @@ function attach(stream, label) {
   // how many a page may hold, so re-attaching enough times stopped working.
   if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AC();
   const ac = audioCtx;
-  /* Safari 17+ lets a page say what it is doing with audio. Without this, opening
-     the microphone puts iOS into a record-and-play session and whatever else is
-     playing gets interrupted, so starting Spotify then coming back here killed
-     the music. "play-and-record" with mixing is the closest honest description:
-     we are listening, not capturing something to keep. Ignored elsewhere. */
-  try {
-    if (navigator.audioSession) navigator.audioSession.type = 'play-and-record';
-  } catch (e) {}
+  sessionMixable();
   S.rate = ac.sampleRate;
   const tr = stream.getAudioTracks()[0];
   S.srcLabel = label || (tr && tr.label) || 'audio';
@@ -408,7 +413,6 @@ function attach(stream, label) {
   analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.48;
   freq = new Uint8Array(analyser.frequencyBinCount);
   S.mic = true;
-  S.lastSample = S.t;                        // give the new stream a clean window
   resync();                                  // old beat history belongs to the old route
 
   if (tr) {
@@ -2496,9 +2500,18 @@ function resync() {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     prev = performance.now(); resync();
-    // Coming back from the lock screen or another app usually left the context
-    // suspended, which reads exactly like silence.
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    /* Coming back from another app leaves the context suspended. Resuming it
+       re-asserts our audio session, and on iOS that stops whatever started
+       playing while we were away — which is the normal way to use this: start a
+       song in Spotify, come back here, watch him dance to it. So declare the
+       session mixable first, then give the other app a moment to settle before
+       taking the context back. */
+    sessionMixable();
+    setTimeout(() => {
+      if (!document.hidden && audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+    }, 400);
   }
 });
 window.addEventListener('focus', () => { prev = performance.now(); });
@@ -2507,20 +2520,23 @@ window.addEventListener('focus', () => { prev = performance.now(); });
    delivering samples, which looks identical to a quiet room, so poll for a
    stream that has gone completely flat and rebuild it. */
 function watchAudio() {
-  if (!analyser || !S.started || S.listen !== 'mic') { S.lastSample = S.t; return; }
+  if (!analyser || !S.started || S.listen !== 'mic') return;
+  // Hidden tab: the context is meant to be suspended and the stream is meant to
+  // be flat. Leave both alone, and do not judge the silence that happens while
+  // we are away — the visibility handler restarts the clock on the way back.
+  if (document.hidden) return;
   if (audioCtx && audioCtx.state === 'suspended') {
     audioCtx.resume().catch(() => {});
   }
   const tr = curStream && curStream.getAudioTracks()[0];
   const bad = !tr || tr.readyState === 'ended' || tr.muted;
-  // A single silent frame proves nothing: the gap between two kicks can be
-  // digital silence. Only a stream that has not produced one non-zero frame for
-  // the whole window is actually dead.
-  if (S.dbg.level > 0) S.lastSample = S.t;
-  const flat = S.t - S.lastSample > 2.5;
-  if (bad || flat) {
-    S.lastSample = S.t;                      // don't re-fire while the retry runs
-    recapture(bad ? 'track dead' : 'stream went flat');
+  /* Reopening the microphone is the single most disruptive thing this page can
+     do: on a phone it re-takes the audio session and stops whatever else is
+     playing. So it is reserved for a track that is genuinely gone. A stream that
+     has merely gone quiet gets left alone however long it lasts — a real mic in
+     a real room recovers on its own, and a silent room is not a fault. */
+  if (bad) {
+    recapture('track dead');
   }
 }
 
