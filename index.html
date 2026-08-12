@@ -25,6 +25,17 @@
 <meta name="twitter:description" content="Play music. He dances to it.">
 <meta name="twitter:image" content="https://mamdanidancefloor.com/og-v2.png">
 <!-- /link preview -->
+<!-- analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-EPYZQ9S7SZ"></script>
+<script>
+  /* The only external request this page makes. It fails silently offline, which
+     keeps the file usable from a USB stick, just unreported. */
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', 'G-EPYZQ9S7SZ');
+</script>
+<!-- /analytics -->
 <style>
   :root { color-scheme: dark; --sp:#1DB954; }
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -2420,6 +2431,18 @@ function drawDancer(cx, footY, u, b, e) {
 
 const el = id => document.getElementById(id);
 
+/* Analytics, deliberately quiet. A projector at a party sits on this page for
+   hours, so events are dropped in full screen rather than drowning the real
+   numbers, and ?noanalytics turns them off outright for the party machine.
+   Never throws: gtag may be blocked, offline, or absent entirely. */
+const NO_TRACK = /[?&]noanalytics\b/.test(location.search);
+function track(name, params) {
+  try {
+    if (NO_TRACK || isFull()) return;
+    if (typeof gtag === 'function') gtag('event', name, params || {});
+  } catch (e) {}
+}
+
 /* ═══════════════════════ crowd ═══════════════════════ */
 // One scatter, chosen for irregular spacing with no clumps and no dead stretches,
 // then written down. Same every load.
@@ -2631,10 +2654,17 @@ async function begin() {
   el('start').classList.add('gone');
   try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch (e) {}
 }
-el('optComputer').addEventListener('click', () => openShare());
+el('optComputer').addEventListener('click', () => {
+  track('share_open', { browser: BROWSER });
+  openShare();
+});
 el('optMic').addEventListener('click', async () => {
-  try { await startMicInput(); begin(); }
+  try {
+    await startMicInput(); begin();
+    track('audio_start', { method: 'microphone', ios: IS_IOS });
+  }
   catch (e) {
+    track('audio_fail', { method: 'microphone', reason: 'permission' });
     el('optMic').querySelector('.cs').textContent =
       'Microphone permission was refused. Allow it in the address bar, then press again.';
   }
@@ -2813,10 +2843,13 @@ el('shareGo').addEventListener('click', async () => {
     ((SHARE_GUIDE[BROWSER] || SHARE_GUIDE.other).picker) + '\u2026';
   try {
     await startStream();
+    track('audio_start', { method: 'share', browser: BROWSER });
     m.textContent = 'Got the audio. \u266a';
     el('share').classList.add('gone');
     if (!S.started) begin();
   } catch (e) {
+    track('audio_fail', { method: 'share', browser: BROWSER,
+      reason: e && e.message === 'no-audio' ? 'no-audio-track' : 'cancelled' });
     m.className = 'err';
     m.textContent = e && e.message === 'no-audio'
       ? 'That share had no sound in it. Switch on "share tab audio" (or "share system audio") before pressing Share.'
