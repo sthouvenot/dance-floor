@@ -566,9 +566,10 @@ const hearing = () => !!analyser && (S.t - S.lastSignal) < 1.5;
    median and only call it a groove when the hits are actually periodic. */
 function beatQuality() {
   const iv = S.intervals;
-  // Three gaps is enough to show a beat is periodic. Waiting for five meant six
-  // beats of standing still, about three seconds in, before he could start.
-  if (iv.length < 3) return 0;
+  // Two gaps is the minimum that can show a spacing at all, and every extra one
+  // is another beat of him standing there while the music is obviously playing.
+  // Noise is caught by the punch test rather than by waiting longer here.
+  if (iv.length < 2) return 0;
   const sorted = [...iv].sort((x, y) => x - y);
   const med = sorted[sorted.length >> 1];
   if (!(med > 0)) return 0;
@@ -628,6 +629,16 @@ function grooving() {
   } else {
     // Starting is the strict end: it takes a real transient, not just regularity.
     if (q > gate('grooveOn') && S.punch > gate('punchOn') && gap < 2.0) S.locked = true;
+    /* Fast path. The test above cannot pass until three onsets have produced two
+       intervals, which is a couple of seconds of him ignoring music that is
+       plainly playing. One interval in a danceable range, hit hard, is enough to
+       start moving on: it is the same evidence, just earlier. The normal test
+       takes over on the next beat and drops him if it was a fluke, so the cost of
+       being wrong is a moment of movement rather than a wrong lock. */
+    else if (S.intervals.length >= 1 && S.punch > gate('punchOn') * 1.15 && gap < 1.2) {
+      const g = S.intervals[S.intervals.length - 1];
+      if (g > 0.3 && g < 1.1) S.locked = true;
+    }
   }
   return S.locked;
 }
@@ -2632,13 +2643,14 @@ function frame(now) {
 
   const src = pickSource();
   S.src = src;
-  // He dances when there is music he can actually hear. Knowing a tempo is not the
-  // same as something playing, so silence — or no input at all — means he waits.
-  // Once listening, give the detector a couple of beats to settle before he starts.
+  // He dances when there is music he can actually hear. grooving() has already
+  // proved the beat is periodic and punchy by the time src is 'listen', so the
+  // old extra settle delay just stacked another 0.7s of standing still on top of
+  // a test that had already passed.
   const nowHear = src === 'listen';
   if (nowHear && !S.wasHearing) S.hearSince = S.t;
   S.wasHearing = nowHear;
-  S.still = !nowHear || (S.t - S.hearSince) < 0.7;
+  S.still = !nowHear;
 
   if (S.still) {
     S.phase = 0;                      // nothing audible, so no beat is kept
@@ -2950,8 +2962,8 @@ function drawDebug() {
   else if (!live) { st.textContent = '✗ attached but SILENT. wrong input or muted'; st.className = 'bad'; }
   else if (!grooving()) {
     st.textContent = '~ sound but no beat (groove ' + beatQuality().toFixed(2) +
-      '/' + GROOVE_ON.toFixed(2) + ', punch ' + S.punch.toFixed(2) +
-      '/' + PUNCH_ON.toFixed(2) + ')';
+      '/' + gate('grooveOn').toFixed(2) + ', punch ' + S.punch.toFixed(2) +
+      '/' + gate('punchOn').toFixed(2) + ')';
     st.className = 'bad';
   }
   else { st.textContent = '✓ locked (groove ' + beatQuality().toFixed(2) +
