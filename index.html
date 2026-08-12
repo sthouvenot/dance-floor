@@ -231,15 +231,8 @@
 <div class="overlay gone" id="share">
   <div class="card">
     <h2>Share this computer's audio</h2>
-    <ol class="steps">
-      <li>Press <b>SHARE AUDIO</b> below.</li>
-      <li>Music in a browser tab? Pick <b>CHROME TAB</b>, then that tab.<br>
-          Music in an app like Spotify? Pick <b>ENTIRE SCREEN</b>.</li>
-      <li class="warn"><b>TURN ON THE AUDIO SWITCH.</b> It sits at the bottom left of the picker
-          and it is <b>OFF BY DEFAULT</b>.<br>
-          Tab: <b>ALSO SHARE TAB AUDIO</b>. Screen: <b>ALSO SHARE SYSTEM AUDIO</b>.</li>
-      <li>Press <b>SHARE</b>.</li>
-    </ol>
+    <p class="lead" id="shareBrowser"></p>
+    <ol class="steps" id="shareSteps"></ol>
     <div class="row" style="justify-content:flex-start">
       <button class="mini go" id="shareGo" style="padding:17px 34px;font-size:16px">SHARE AUDIO</button>
       <button class="ghost" id="shareCancel">back</button>
@@ -2482,20 +2475,138 @@ el('optMic').addEventListener('click', async () => {
   }
 });
 
+/* Which browser is this? Only used to label the share picker, whose wording and
+   capabilities genuinely differ. Order matters: Edge and Opera both carry
+   "Chrome" in the UA, so they have to be tested first. */
+const BROWSER = (() => {
+  const ua = navigator.userAgent;
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/OPR\//.test(ua)) return 'opera';
+  if (/Firefox\//.test(ua)) return 'firefox';
+  // Safari is the only major engine that is WebKit but not Chromium.
+  if (/Safari\//.test(ua) && !/Chrome|Chromium|CriOS/.test(ua)) return 'safari';
+  if (/Chrome|Chromium|CriOS/.test(ua)) return 'chrome';
+  return 'other';
+})();
+
+/* Safari implements getDisplayMedia but never returns an audio track, so its
+   share route is a dead end even though feature detection says otherwise. */
+const NO_TAB_AUDIO = BROWSER === 'safari';
+
 /* Phones and tablets can't hand a page their system audio at all, so only the
-   microphone route is offered there. */
+   microphone route is offered there. Safari joins them for the reason above. */
 const noSystemAudio = !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia
+  || NO_TAB_AUDIO
   || (navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches);
 if (noSystemAudio) {
   el('optComputer').style.display = 'none';
   el('psub').textContent = 'He wants to dance. Let him hear the music.';
   el('optMic').querySelector('.ch').textContent = 'Start the music';
-  el('optMic').querySelector('.cs').textContent =
-    'He listens through the microphone and dances to whatever is playing nearby, including this phone\u2019s own speaker.';
+  // Desktop Safari lands here too, so don't tell a Mac user about "this phone".
+  el('optMic').querySelector('.cs').textContent = NO_TAB_AUDIO
+    ? 'Safari cannot pass this page the sound from a tab or from your system, so he '
+      + 'listens through the microphone and dances to whatever is playing nearby. '
+      + 'To share the audio directly, open this page in Chrome or Edge.'
+    : 'He listens through the microphone and dances to whatever is playing nearby, '
+      + 'including this phone\u2019s own speaker.';
 }
 
 
+/* The picker is the single most common place this goes wrong, and every browser
+   words it differently. Chrome and Edge hide the audio toggle at the bottom left
+   of the dialog and ship it OFF, which is the failure people hit. Firefox on
+   Windows does not offer audio with a shared screen at all, so pointing someone
+   at a toggle that is not there would waste their time: it gets sent to the
+   microphone instead. Only the wording changes here, never the mechanism. */
+const SHARE_GUIDE = {
+  chrome: {
+    name: 'Chrome',
+    picker: 'Chrome’s picker',
+    steps: [
+      'Press <b>SHARE AUDIO</b> below.',
+      'Music in a browser tab? Pick <b>CHROME TAB</b>, then that tab.<br>' +
+        'Music in an app like Spotify? Pick <b>ENTIRE SCREEN</b>.',
+      { warn: true, html: '<b>TURN ON THE AUDIO SWITCH.</b> It sits at the bottom left of the ' +
+        'picker and it is <b>OFF BY DEFAULT</b>.<br>' +
+        'Tab: <b>ALSO SHARE TAB AUDIO</b>. Screen: <b>ALSO SHARE SYSTEM AUDIO</b>.' },
+      'Press <b>SHARE</b>.'
+    ]
+  },
+  edge: {
+    name: 'Edge',
+    picker: 'Edge’s picker',
+    steps: [
+      'Press <b>SHARE AUDIO</b> below.',
+      'Music in a browser tab? Pick <b>BROWSER TAB</b>, then that tab.<br>' +
+        'Music in an app like Spotify? Pick <b>ENTIRE SCREEN</b>.',
+      { warn: true, html: '<b>TURN ON THE AUDIO SWITCH.</b> It sits at the bottom left of the ' +
+        'picker and it is <b>OFF BY DEFAULT</b>.<br>' +
+        'Tab: <b>ALSO SHARE TAB AUDIO</b>. Screen: <b>ALSO SHARE SYSTEM AUDIO</b>.' },
+      'Press <b>SHARE</b>.'
+    ]
+  },
+  opera: {
+    name: 'Opera',
+    picker: 'Opera’s picker',
+    steps: [
+      'Press <b>SHARE AUDIO</b> below.',
+      'Music in a browser tab? Pick <b>TAB</b>, then that tab.<br>' +
+        'Music in an app like Spotify? Pick <b>ENTIRE SCREEN</b>.',
+      { warn: true, html: '<b>TURN ON THE AUDIO SWITCH</b> in the picker. It is ' +
+        '<b>OFF BY DEFAULT</b>.' },
+      'Press <b>SHARE</b>.'
+    ]
+  },
+  firefox: {
+    name: 'Firefox',
+    picker: 'Firefox’s picker',
+    // Firefox shares video only, so the honest answer is the microphone.
+    redirect: 'Firefox cannot pass this page the sound from a tab or from your ' +
+      'system. That is a Firefox limitation, not something this page can work around.',
+    steps: [
+      'Go <b>back</b> and choose <b>the microphone</b> instead. He will hear your ' +
+        'speakers and dance to them.',
+      'Prefer to share the audio directly? Open this page in <b>Chrome</b> or ' +
+        '<b>Edge</b>, which can.'
+    ]
+  },
+  // Safari normally never reaches this dialog: NO_TAB_AUDIO hides the share
+  // option on the landing page and sends it to the microphone. Kept so the
+  // dialog still reads correctly if that gate is ever loosened.
+  safari: {
+    name: 'Safari',
+    picker: 'the picker',
+    redirect: 'Safari does not hand web pages the sound from a tab or from your system.',
+    steps: [
+      'Go <b>back</b> and choose <b>the microphone</b> instead.',
+      'Prefer to share the audio directly? Open this page in <b>Chrome</b> or <b>Edge</b>.'
+    ]
+  },
+  other: {
+    name: 'your browser',
+    picker: 'the picker',
+    steps: [
+      'Press <b>SHARE AUDIO</b> below.',
+      'Music in a browser tab? Pick that <b>tab</b>.<br>' +
+        'Music in an app like Spotify? Pick your <b>whole screen</b>.',
+      { warn: true, html: '<b>TURN ON THE AUDIO SWITCH.</b> Most browsers ship it ' +
+        '<b>OFF BY DEFAULT</b> and put it near the bottom of the picker. Without it ' +
+        'you share a picture with no sound.' },
+      'Press <b>SHARE</b>.'
+    ]
+  }
+};
+
 function openShare() {
+  const g = SHARE_GUIDE[BROWSER] || SHARE_GUIDE.other;
+  el('shareBrowser').innerHTML = g.redirect
+    ? g.redirect
+    : 'Steps below are for <b>' + g.name + '</b>, which is what you are running.';
+  el('shareSteps').innerHTML = g.steps.map(s =>
+    typeof s === 'string' ? '<li>' + s + '</li>'
+                          : '<li class="warn">' + s.html + '</li>').join('');
+  // Nothing to press when the browser cannot do it at all.
+  el('shareGo').style.display = g.redirect ? 'none' : '';
   el('share').classList.remove('gone');
   el('shareMsg').className = ''; el('shareMsg').textContent = '';
 }
@@ -2503,7 +2614,8 @@ el('shareCancel').addEventListener('click', () => el('share').classList.add('gon
 
 el('shareGo').addEventListener('click', async () => {
   const m = el('shareMsg');
-  m.className = ''; m.textContent = 'Opening Chrome\u2019s picker\u2026';
+  m.className = ''; m.textContent = 'Opening ' +
+    ((SHARE_GUIDE[BROWSER] || SHARE_GUIDE.other).picker) + '\u2026';
   try {
     await startStream();
     m.textContent = 'Got the audio. \u266a';
@@ -2513,7 +2625,8 @@ el('shareGo').addEventListener('click', async () => {
     m.className = 'err';
     m.textContent = e && e.message === 'no-audio'
       ? 'That share had no sound in it. Switch on "share tab audio" (or "share system audio") before pressing Share.'
-      : 'Chrome did not hand over any audio. Try again with the audio toggle switched on.';
+      : (SHARE_GUIDE[BROWSER] || SHARE_GUIDE.other).name +
+        ' did not hand over any audio. Try again with the audio toggle switched on.';
   }
 });
 
