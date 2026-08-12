@@ -405,7 +405,7 @@ const S = {
   lastBeat:-9, intervals:[], taps:[], parts:[], head:0,
   tint:null,
   sync:'clock', src:'clock', still:true, offset:0, grid:null, gridIdx:0, lastTempoBeat:-1, lastBpmSave:-9,
-  lastSignal:-9, hearSince:-9, wasHearing:false, locked:false, punch:0,
+  lastSignal:-9, hearSince:-9, wasHearing:false,
   srcLabel:'', rate:0, fps:0,
   dbg:{ flux:0, thresh:0, onsets:0, lastOnset:-9, scope:[], level:0 },
   sp:{ on:false, playing:false, id:null, p0:0, t0:0, dur:0, art:'' }
@@ -555,105 +555,10 @@ async function startStream() {
 }
 
 /* Are we actually hearing anything right now? */
-/* Once he is dancing, give silence far longer to prove itself. A quiet passage
-   or a mic that dips under the loudness floor for a moment is not the song
-   ending, and treating it as such stopped him mid-track. */
-const hearing = () => !!analyser &&
-  (S.t - S.lastSignal) < (S.locked ? 6.0 : 1.5);
-
-/* Audible is not the same as rhythmic. Room tone and handling noise clear the
-   loudness gate, and broadband noise even trips spectral flux often enough to
-   fake a stream of onsets, which had him dancing to a quiet room.
-
-   What noise cannot fake is regularity. Music lands onsets at a steady spacing;
-   noise scatters them. So judge the spread of the recent intervals against their
-   median and only call it a groove when the hits are actually periodic. */
-function beatQuality() {
-  const iv = S.intervals;
-  // Two gaps is the minimum that can show a spacing at all, and every extra one
-  // is another beat of him standing there while the music is obviously playing.
-  // Noise is caught by the punch test rather than by waiting longer here.
-  if (iv.length < 2) return 0;
-  const sorted = [...iv].sort((x, y) => x - y);
-  const med = sorted[sorted.length >> 1];
-  if (!(med > 0)) return 0;
-  // Mean absolute deviation from the median, as a fraction of it. Tight on a real
-  // beat, wide on scattered hits. Fold in half/double time so a detector that
-  // catches every other kick still reads as steady.
-  let dev = 0;
-  for (const g of iv) {
-    const r = g / med;
-    // Only halves and doubles. Adding 3/4 and 3/2 was tried and made the test
-    // useless: with that many accepted ratios almost any interval sits near one,
-    // and steady white noise scored as a groove.
-    const f = Math.min(Math.abs(r - 1), Math.abs(r - 0.5), Math.abs(r - 2));
-    dev += f;
-  }
-  return 1 - Math.min(1, (dev / iv.length) / 0.34);
-}
-
-/* Regularity alone cannot tell music from noise. The onset detector holds a
-   0.22s refractory period, which squeezes noise onsets into a narrow band of
-   intervals and makes them score as steady: measured white noise sat at 0.69
-   median, peaking 0.79, which is well inside anything music needs to clear.
-
-   What separates them is transient strength. A kick spikes the spectral flux far
-   over its own adaptive threshold; noise only ever grazes it. Measured over the
-   same clips: music peaked at 2.32x threshold, noise at 1.18x.
-
-   So require both a steady spacing and a real punch, each with hysteresis.
-   Getting started should take convincing, but once he is dancing a momentary dip
-   — a breakdown, someone talking over the speaker — must not freeze him. */
-/* These were tuned against synthetic clips. A real room is louder, boomier and
-   more reflective than any of them, so S.ease (0..1, from the slider) slides the
-   whole set between strict and generous. 0.5 is where the tuning landed; drag up
-   if he stands still through music, down if he dances to the room. */
-/* Starting and stopping are deliberately lopsided. Getting him going takes real
-   evidence, but once he is dancing the only thing that should stop him is the
-   music actually stopping. A quality dip is not that: with a short interval
-   history one odd gap swings the score hard, and dropping him on that is what
-   made him freeze in the middle of songs. */
-const GATES = {
-  //              strict        generous
-  grooveOn:  [0.72, 0.30],
-  grooveOff: [0.12, 0.02],       // only a total collapse of the beat lets go
-  punchOn:   [1.90, 1.12],
-  holdGap:   [4.50, 8.00]        // seconds of silence before he gives up
-};
-const gate = k => {
-  const [a, b] = GATES[k];
-  return a + (b - a) * S.ease;
-};
-
-function grooving() {
-  if (!hearing()) { S.locked = false; return false; }
-  const q = beatQuality();
-  const gap = S.t - S.lastBeat;
-  if (S.locked) {
-    // Punch deliberately does not appear here. A breakdown drops it to about 1.1,
-    // which is inside the range steady noise reaches, so releasing on it would
-    // freeze him during the quiet part of a song. Let the beat spacing and a
-    // roughly bar-long silence decide when the music has actually stopped.
-    if (q < gate('grooveOff') || gap > gate('holdGap')) S.locked = false;
-  } else {
-    // Starting is the strict end: it takes a real transient, not just regularity.
-    if (q > gate('grooveOn') && S.punch > gate('punchOn') && gap < 2.0) S.locked = true;
-    /* Fast path. The test above cannot pass until three onsets have produced two
-       intervals, which is a couple of seconds of him ignoring music that is
-       plainly playing. One interval in a danceable range, hit hard, is enough to
-       start moving on: it is the same evidence, just earlier. The normal test
-       takes over on the next beat and drops him if it was a fluke, so the cost of
-       being wrong is a moment of movement rather than a wrong lock. */
-    else if (S.intervals.length >= 1 && S.punch > gate('punchOn') * 1.15 && gap < 1.2) {
-      const g = S.intervals[S.intervals.length - 1];
-      if (g > 0.3 && g < 1.1) S.locked = true;
-    }
-  }
-  return S.locked;
-}
+const hearing = () => !!analyser && (S.t - S.lastSignal) < 1.5;
 
 /* One clock only: the sound this computer is playing. */
-function pickSource() { return grooving() ? 'listen' : 'none'; }
+function pickSource() { return hearing() ? 'listen' : 'none'; }
 
 function readAudio() {
   analyser.getByteFrequencyData(freq);
@@ -686,7 +591,9 @@ function readAudio() {
   S.dbg.flux = flux;
   // The slider also opens up onset detection itself, so a quiet or distant
   // speaker registers hits at all rather than only loosening the gates above.
-  S.dbg.thresh = mean + sd * ((S.sens * (1.6 - S.ease * 0.8)) - 0.35);
+  /* The slider scales the onset threshold either side of the original tuning:
+     at the middle this is exactly S.sens, left is stricter, right catches more. */
+  S.dbg.thresh = mean + sd * ((S.sens * (1.5 - S.ease)) - 0.35);
   if (all > 0.005) S.lastSignal = S.t;               // something is actually audible
   S.dbg.scope.push(flux); if (S.dbg.scope.length > 200) S.dbg.scope.shift();
 
@@ -695,19 +602,7 @@ function readAudio() {
     onset(flux);
   }
 
-  // How hard the transients are hitting, relative to the rolling threshold they
-  // have to beat. Rises fast on a kick and sags slowly, so it reads the strongest
-  // hit of the last second or two rather than whichever frame we happen to be in.
-  if (S.dbg.thresh > 0) {
-    const ratio = flux / S.dbg.thresh;
-    S.punch = ratio > S.punch ? ratio : S.punch + (ratio - S.punch) * 0.012;
-  }
 
-  /* Once the beat has clearly gone, drop the tempo history, or the old intervals
-     sit there and the next stray noise restarts him instantly. This has to
-     outlast holdGap: clearing at 2.5s zeroed beatQuality() while he was still
-     inside his hold window, which dropped him mid song. */
-  if (S.intervals.length && S.t - S.lastBeat > 9) S.intervals.length = 0;
 }
 
 function onset(strength) {
@@ -2575,8 +2470,6 @@ function resync() {
   S.intervals.length = 0;
   hist.length = 0; fluxHist.length = 0;
   S.lastSignal = -9;
-  S.locked = false;              // re-earn the beat rather than trusting a stale lock
-  S.punch = 0;
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -2652,14 +2545,13 @@ function frame(now) {
 
   const src = pickSource();
   S.src = src;
-  // He dances when there is music he can actually hear. grooving() has already
-  // proved the beat is periodic and punchy by the time src is 'listen', so the
-  // old extra settle delay just stacked another 0.7s of standing still on top of
-  // a test that had already passed.
+  // He dances when there is music he can actually hear. Knowing a tempo is not the
+  // same as something playing, so silence — or no input at all — means he waits.
+  // Once listening, give the detector a couple of beats to settle before he starts.
   const nowHear = src === 'listen';
   if (nowHear && !S.wasHearing) S.hearSince = S.t;
   S.wasHearing = nowHear;
-  S.still = !nowHear;
+  S.still = !nowHear || (S.t - S.hearSince) < 0.7;
 
   if (S.still) {
     S.phase = 0;                      // nothing audible, so no beat is kept
@@ -2969,14 +2861,7 @@ function drawDebug() {
   const st = el('dState');
   if (!analyser) { st.textContent = '✗ no audio attached'; st.className = 'bad'; }
   else if (!live) { st.textContent = '✗ attached but SILENT. wrong input or muted'; st.className = 'bad'; }
-  else if (!grooving()) {
-    st.textContent = '~ sound but no beat (groove ' + beatQuality().toFixed(2) +
-      '/' + gate('grooveOn').toFixed(2) + ', punch ' + S.punch.toFixed(2) +
-      '/' + gate('punchOn').toFixed(2) + ')';
-    st.className = 'bad';
-  }
-  else { st.textContent = '✓ locked (groove ' + beatQuality().toFixed(2) +
-    ', punch ' + S.punch.toFixed(2) + ')'; st.className = 'good'; }
+  else { st.textContent = '✓ hearing sound'; st.className = 'good'; }
 
   const lvl = Math.min(1, S.energy * 1.4);
   el('dLevel').style.width = (lvl * 100).toFixed(0) + '%';
@@ -3072,8 +2957,8 @@ let sensNote = '';
 function sensLabel() {
   const t = !analyser ? 'no audio yet'
           : !hearing() ? 'hearing nothing'
-          : S.locked   ? 'dancing'
-          : 'waiting for a beat';
+          : S.still    ? 'waiting'
+          : 'dancing';
   if (t !== sensNote) { sensNote = t; sensVal.textContent = t; }
 }
 
