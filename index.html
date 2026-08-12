@@ -566,7 +566,9 @@ const hearing = () => !!analyser && (S.t - S.lastSignal) < 1.5;
    median and only call it a groove when the hits are actually periodic. */
 function beatQuality() {
   const iv = S.intervals;
-  if (iv.length < 5) return 0;
+  // Three gaps is enough to show a beat is periodic. Waiting for five meant six
+  // beats of standing still, about three seconds in, before he could start.
+  if (iv.length < 3) return 0;
   const sorted = [...iv].sort((x, y) => x - y);
   const med = sorted[sorted.length >> 1];
   if (!(med > 0)) return 0;
@@ -2143,9 +2145,12 @@ function spawn() {
       kind: sc.kind, thrown: true,
       x: Math.random() * W, y: H * (ty[0] + Math.random() * (ty[1] - ty[0])),
       vx: (Math.random() - 0.5) * 170, vy: -(H * (0.34 + Math.random() * 0.40)),
-      // Scale off the stage, not fixed pixels, so a phone gets the same
-      // proportion as a desktop rather than desktop-sized items on a small band.
-      w: H * 0.025, h: H * 0.044,
+      /* Sized against the dancer rather than the stage, which is the only thing
+         that reads as "a bottle someone threw". His body unit is H*0.188, so a
+         bottle at a fifth of that is about right. drawParts multiplies h by 1.1,
+         so the drawn height is a touch over this. */
+      // Floor it so a phone's short band does not shrink them into specks.
+      w: Math.max(5, H * 0.188 * 0.028), h: Math.max(13, H * 0.188 * 0.072),
       r: Math.random() * 6.3, vr: (Math.random() - 0.5) * 13,
       food: (Math.random() * 5) | 0,
       c: p[(Math.random() * p.length) | 0]
