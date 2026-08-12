@@ -28,9 +28,12 @@
 <style>
   :root { color-scheme: dark; --sp:#1DB954; }
   * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { height:100%; background:#05010f; overflow:hidden;
+  html,body { height:100%; height:100dvh; background:#05010f; overflow:hidden;
     font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
-  #stage { display:block; width:100vw; height:100vh; }
+  /* 100vh on iOS Safari is the height with the browser chrome hidden, which is
+     taller than what you can actually see, so the canvas ran on behind the
+     toolbar and anything centred in it sat low. dvh tracks the visible area. */
+  #stage { display:block; width:100vw; height:100vh; height:100dvh; }
 
   .overlay { position:fixed; inset:0; display:flex; flex-direction:column;
     align-items:center; justify-content:center; text-align:center; gap:20px; padding:32px;
@@ -335,17 +338,30 @@ const soloQuery = window.matchMedia('(max-width:700px)');
 
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1);
-  VW = window.innerWidth; VH = window.innerHeight;
+  // visualViewport is the part you can actually see. On iOS innerHeight counts
+  // the area behind the URL bar and toolbar, so centring against it put the band
+  // below the middle of the screen.
+  const vv = window.visualViewport;
+  VW = window.innerWidth;
+  VH = vv ? Math.round(vv.height) : window.innerHeight;
   SOLO = soloQuery.matches;
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
-  W = VW; H = Math.min(VH, Math.round(VW * MAXR));
+  W = VW;
+  const newH = Math.min(VH, Math.round(VW * MAXR));
+  // The toolbar sliding away changes VH without changing the band, and every
+  // call here throws away the cached scene art. Only rebuild when H really moved.
+  const sameH = newH === H;
+  H = newH;
   offY = Math.round((VH - H) / 2);
   ctx.setTransform(DPR, 0, 0, DPR, 0, offY * DPR);
   document.body.classList.toggle('boxed', offY > 6);
   document.documentElement.style.setProperty('--band', offY + 'px');
-  for (const k in caches) delete caches[k];
+  if (!sameH) for (const k in caches) delete caches[k];
 }
 window.addEventListener('resize', resize);
+// The iOS toolbar slides in and out without firing a window resize.
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 resize();
 
 function cache(key, w, h, fn) {
