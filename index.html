@@ -386,6 +386,14 @@ function attach(stream, label) {
   // how many a page may hold, so re-attaching enough times stopped working.
   if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AC();
   const ac = audioCtx;
+  /* Safari 17+ lets a page say what it is doing with audio. Without this, opening
+     the microphone puts iOS into a record-and-play session and whatever else is
+     playing gets interrupted, so starting Spotify then coming back here killed
+     the music. "play-and-record" with mixing is the closest honest description:
+     we are listening, not capturing something to keep. Ignored elsewhere. */
+  try {
+    if (navigator.audioSession) navigator.audioSession.type = 'play-and-record';
+  } catch (e) {}
   S.rate = ac.sampleRate;
   const tr = stream.getAudioTracks()[0];
   S.srcLabel = label || (tr && tr.label) || 'audio';
@@ -419,8 +427,7 @@ async function recapture(why) {
   recapturing = true;
   try {
     if (audioCtx && audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    const s = await navigator.mediaDevices.getUserMedia({ audio: micAudio() });
     attach(s, 'mic');
   } catch (e) {
     // Leave him breathing rather than frozen mid-pose; the next tap can retry.
@@ -429,9 +436,20 @@ async function recapture(why) {
   }
 }
 
+/* Turning the three processors off gives the cleanest signal for beat detection,
+   but on a phone it puts the browser into a voice-recording audio mode, and the
+   OS then interrupts whatever else is playing. Spotify stops the moment the page
+   opens the microphone. On a phone the music matters more than the last bit of
+   detection accuracy, so leave the processing at its defaults there and only ask
+   for the raw feed on desktop. */
+const isPhone = () =>
+  navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches;
+const micAudio = () => isPhone()
+  ? true
+  : { echoCancellation:false, noiseSuppression:false, autoGainControl:false };
+
 async function startMic() {
-  const s = await navigator.mediaDevices.getUserMedia({
-    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+  const s = await navigator.mediaDevices.getUserMedia({ audio: micAudio() });
   S.listen = 'mic';        // set first: attach() wires recovery that checks this
   attach(s);
 }
@@ -452,17 +470,18 @@ async function listInputs() {
 }
 
 async function startInput(deviceId, isLoop, label) {
-  attach(await navigator.mediaDevices.getUserMedia({
-    audio:{ deviceId: deviceId ? { exact: deviceId } : undefined,
-            echoCancellation:false, noiseSuppression:false, autoGainControl:false } }), label);
+  const a = micAudio();
+  const audio = a === true
+    ? { deviceId: deviceId ? { exact: deviceId } : undefined }
+    : { deviceId: deviceId ? { exact: deviceId } : undefined, ...a };
+  attach(await navigator.mediaDevices.getUserMedia({ audio }), label);
   S.listen = isLoop ? 'stream' : 'mic';
 }
 
 /* Fallback: capture a tab's audio. The constraints open Chrome's picker straight on the
    tab list with system audio available, rather than dumping the user on "Entire Screen". */
 async function startMicInput() {
-  attach(await navigator.mediaDevices.getUserMedia({
-    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }), 'microphone');
+  attach(await navigator.mediaDevices.getUserMedia({ audio: micAudio() }), 'microphone');
   S.listen = 'mic';
 }
 
@@ -2686,7 +2705,7 @@ const NO_TAB_AUDIO = (() => {
    microphone route is offered there. Firefox and Safari join them: they can
    share a picture but never the sound, so offering the share route would only
    walk someone into a picker that cannot do what the page needs. */
-const onPhone = navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches;
+const onPhone = isPhone();
 const noSystemAudio = NO_TAB_AUDIO || onPhone;
 if (noSystemAudio) {
   el('optComputer').style.display = 'none';
