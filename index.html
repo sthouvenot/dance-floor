@@ -339,8 +339,7 @@ function resize() {
   SOLO = soloQuery.matches;
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
   W = VW; H = Math.min(VH, Math.round(VW * MAXR));
-  // 0.5 centres the band; 0.62 drops it to leave room for the fact above.
-  offY = Math.round((VH - H) * (SOLO ? 0.62 : 0.5));
+  offY = Math.round((VH - H) / 2);
   ctx.setTransform(DPR, 0, 0, DPR, 0, offY * DPR);
   document.body.classList.toggle('boxed', offY > 6);
   document.documentElement.style.setProperty('--band', offY + 'px');
@@ -675,7 +674,9 @@ function pulse(power) {
   S.kick = Math.max(S.kick, power);
   if (SC().thrown && (S.beat & 1) === 0) spawn();          // just the odd one, but big
   S.flash = Math.max(S.flash, Math.min(0.20, power * 0.10));
-  const n = 3 + Math.round(power * 10);
+  // Same count in a third of the area reads as clutter, so thin it out on a
+  // small stage rather than burying the scene.
+  const n = Math.max(1, Math.round((3 + power * 10) * (SOLO ? 0.45 : 1)));
   for (let i = 0; i < n; i++) spawn();
 }
 
@@ -2104,7 +2105,10 @@ function spawn() {
       kind: sc.kind, thrown: true,
       x: Math.random() * W, y: H * (ty[0] + Math.random() * (ty[1] - ty[0])),
       vx: (Math.random() - 0.5) * 170, vy: -(H * (0.34 + Math.random() * 0.40)),
-      w: 36, h: 64,                       // uniform, and large enough to read
+      // Scale off the stage, not fixed pixels. At 36x64 these were tuned for a
+      // desktop stage and stayed that size on a phone, where the band is a third
+      // the height, so the bottles came out enormous.
+      w: H * 0.075, h: H * 0.133,
       r: Math.random() * 6.3, vr: (Math.random() - 0.5) * 13,
       food: (Math.random() * 5) | 0,
       c: p[(Math.random() * p.length) | 0]
