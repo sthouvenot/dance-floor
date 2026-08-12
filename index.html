@@ -334,7 +334,21 @@ const MAXR = 0.72;                       // tallest the stage is ever allowed to
 /* Phones get the full show in a letterboxed band, scenes and spectrum included.
    The band sits below centre so the fact reads above it rather than over it. */
 let SOLO = false;
+let safeT = 0, safeB = 0;
 const soloQuery = window.matchMedia('(max-width:700px)');
+
+/* Read a safe-area inset through a CSS variable, since env() is not readable
+   from script directly. Returns 0 anywhere the browser does not overlap. */
+const insetProbe = document.createElement('div');
+insetProbe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;' +
+  'visibility:hidden;pointer-events:none;' +
+  'padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)';
+document.documentElement.appendChild(insetProbe);
+function readInset(which) {
+  const cs = getComputedStyle(insetProbe);
+  const v = parseFloat(which === '--sat' ? cs.paddingTop : cs.paddingBottom);
+  return isFinite(v) ? v : 0;
+}
 
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1);
@@ -345,6 +359,12 @@ function resize() {
   VW = window.innerWidth;
   VH = vv ? Math.round(vv.height) : window.innerHeight;
   SOLO = soloQuery.matches;
+  /* Safari floats its bottom bar over the page instead of shrinking it, so even
+     visualViewport counts the strip hidden underneath. The safe-area insets are
+     what report that overlap, so centre between them rather than in the raw
+     height. Chrome shrinks the viewport properly and reports 0 here. */
+  safeT = readInset('--sat');
+  safeB = readInset('--sab');
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
   W = VW;
   const newH = Math.min(VH, Math.round(VW * MAXR));
@@ -352,7 +372,9 @@ function resize() {
   // call here throws away the cached scene art. Only rebuild when H really moved.
   const sameH = newH === H;
   H = newH;
-  offY = Math.round((VH - H) / 2);
+  // Centre in the space between the obscured strips, then shift down past the
+  // top one. With no overlap both are 0 and this is a plain centre.
+  offY = Math.round(safeT + (VH - safeT - safeB - H) / 2);
   ctx.setTransform(DPR, 0, 0, DPR, 0, offY * DPR);
   document.body.classList.toggle('boxed', offY > 6);
   document.documentElement.style.setProperty('--band', offY + 'px');
@@ -2121,10 +2143,9 @@ function spawn() {
       kind: sc.kind, thrown: true,
       x: Math.random() * W, y: H * (ty[0] + Math.random() * (ty[1] - ty[0])),
       vx: (Math.random() - 0.5) * 170, vy: -(H * (0.34 + Math.random() * 0.40)),
-      // Scale off the stage, not fixed pixels. At 36x64 these were tuned for a
-      // desktop stage and stayed that size on a phone, where the band is a third
-      // the height, so the bottles came out enormous.
-      w: H * 0.075, h: H * 0.133,
+      // Scale off the stage, not fixed pixels, so a phone gets the same
+      // proportion as a desktop rather than desktop-sized items on a small band.
+      w: H * 0.025, h: H * 0.044,
       r: Math.random() * 6.3, vr: (Math.random() - 0.5) * 13,
       food: (Math.random() * 5) | 0,
       c: p[(Math.random() * p.length) | 0]
