@@ -10,11 +10,11 @@
 <meta name="theme-color" content="#12235B">
 <!-- /favicon -->
 <!-- link preview -->
-<meta name="description" content="He dances on the beat to whatever your speakers are playing. Real time beat detection, no setup, no sign in.">
+<meta name="description" content="Play music. He dances to it.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Mamdani Dance Floor">
 <meta property="og:title" content="Mamdani Dance Floor">
-<meta property="og:description" content="He dances on the beat to whatever your speakers are playing. Real time beat detection, no setup, no sign in.">
+<meta property="og:description" content="Play music. He dances to it.">
 <meta property="og:url" content="https://mamdanidancefloor.com/">
 <meta property="og:image" content="https://mamdanidancefloor.com/og.png">
 <meta property="og:image:width" content="1200">
@@ -22,7 +22,7 @@
 <meta property="og:image:alt" content="Mamdani Dance Floor">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Mamdani Dance Floor">
-<meta name="twitter:description" content="He dances on the beat to whatever your speakers are playing. Real time beat detection, no setup, no sign in.">
+<meta name="twitter:description" content="Play music. He dances to it.">
 <meta name="twitter:image" content="https://mamdanidancefloor.com/og.png">
 <!-- /link preview -->
 <style>
@@ -228,14 +228,15 @@
     background:#FFCF00; border:3px solid #12235B; box-shadow:0 2px 10px rgba(0,0,0,.5); }
 
   @media (max-width:700px) {
-    /* Phone is the solo view: him alone on flat dark. No scene art behind him,
-       so there is no fact to caption. display:none also beats the inline
-       opacity setFact() writes. */
-    #fact { display:none; }
-    /* Nothing but him on a phone. The sync chip is desk furniture (he either
-       dances or he does not, which says the same thing), and the full-screen
-       button is the one control most likely to be hit by accident while
-       someone is holding the phone up. */
+    /* The fact moves to the empty space above the band, where it reads as a
+       caption for the scene rather than something covering it. */
+    #fact { left:12px; right:12px; bottom:auto; top:14px; width:auto; max-width:none;
+      padding:10px 13px 11px; border-left-width:4px; text-align:left; }
+    #fact .fl { font-size:9px; letter-spacing:.2em; margin-bottom:5px; }
+    #fact .ft { font-size:12px; line-height:1.4; }
+    /* The sync chip is desk furniture (he either dances or he does not, which
+       says the same thing), and the full-screen button is the one control most
+       likely to be hit by accident while someone is holding the phone up. */
     #corner { display:none; }
     #sens { display:block; }
   }
@@ -327,10 +328,8 @@ const caches = {};
    into a letterboxed band across the middle and leave the rest dark. */
 const MAXR = 0.72;                       // tallest the stage is ever allowed to get
 
-/* On a phone the letterboxed band left him about a third of the screen and the
-   wide scene art was unreadable at that size. Phones instead get him alone,
-   full height, on flat dark: no scenes, no spectrum, no crowd, no fact box.
-   Matches the CSS breakpoint below. */
+/* Phones get the full show in a letterboxed band, scenes and spectrum included.
+   The band sits below centre so the fact reads above it rather than over it. */
 let SOLO = false;
 const soloQuery = window.matchMedia('(max-width:700px)');
 
@@ -339,8 +338,9 @@ function resize() {
   VW = window.innerWidth; VH = window.innerHeight;
   SOLO = soloQuery.matches;
   cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
-  W = VW; H = SOLO ? VH : Math.min(VH, Math.round(VW * MAXR));
-  offY = SOLO ? 0 : Math.round((VH - H) / 2);
+  W = VW; H = Math.min(VH, Math.round(VW * MAXR));
+  // 0.5 centres the band; 0.62 drops it to leave room for the fact above.
+  offY = Math.round((VH - H) * (SOLO ? 0.62 : 0.5));
   ctx.setTransform(DPR, 0, 0, DPR, 0, offY * DPR);
   document.body.classList.toggle('boxed', offY > 6);
   document.documentElement.style.setProperty('--band', offY + 'px');
@@ -2630,27 +2630,8 @@ function draw() {
   ctx.save();                                  // wipe the full surface, bars included
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, VW, VH);
-  if (SOLO || offY > 0) { ctx.fillStyle = SOLO ? '#0a1638' : '#05070f'; ctx.fillRect(0, 0, VW, VH); }
+  if (offY > 0) { ctx.fillStyle = '#0a1638'; ctx.fillRect(0, 0, VW, VH); }
   ctx.restore();
-
-  /* Phone: just him, dancing, on the campaign navy. He gets the whole viewport,
-     so the unit scales off the short side and he stands lower than the wide
-     layout. A soft pool of light under him keeps him off a flat wall of colour
-     and gives the beat somewhere to show. */
-  if (SOLO) {
-    ctx.save();
-    ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
-    const gy = H * 0.62, gr = Math.max(W, H) * (0.52 + S.kick * 0.05);
-    const bg = ctx.createRadialGradient(W / 2, gy, 0, W / 2, gy, gr);
-    bg.addColorStop(0, '#1b3170');
-    bg.addColorStop(0.55, '#12235B');
-    bg.addColorStop(1, '#0a1638');
-    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-    drawDancer(W / 2, H * 0.72, Math.min(W, H) * 0.25, S.beat + S.phase, S.energy);
-    if (S.flash > 0.01) { ctx.fillStyle = `rgba(255,255,255,${S.flash * 0.5})`; ctx.fillRect(0, 0, W, H); }
-    ctx.restore();
-    return;
-  }
 
   ctx.save();                                  // nothing escapes the stage
   ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
@@ -2752,23 +2733,18 @@ if (noSystemAudio) {
   el('optMic').querySelector('.ch').textContent = 'Start the music';
   // A desktop browser that cannot share audio lands here too, so don't tell
   // someone on a laptop about "this phone".
-  const named = { firefox:'Firefox', safari:'Safari' }[BROWSER];
-  /* iOS hands the microphone to one app at a time. The moment this page starts
-     listening, iOS interrupts whatever else is playing, and a web page has no way
-     to ask for a mixable session \u2014 navigator.audioSession is the only lever and it
-     does not deliver here. So don't promise the phone's own speaker on iPhone;
-     point at a second source, which is what actually works. */
+  /* iOS hands the microphone to one app at a time, so the moment this page
+     listens it interrupts whatever is playing. Nothing a page can do about it,
+     so iPhone gets pointed at a second source instead of the phone's own
+     speaker. Keep the wording short: users need the instruction, not the cause. */
   el('optMic').querySelector('.cs').textContent =
     (!onPhone && NO_TAB_AUDIO)
-      ? (named || 'This browser') + ' cannot pass this page the sound from a tab or from '
-        + 'your system, so he listens through the microphone and dances to whatever is '
-        + 'playing nearby. To share the audio directly, open this page in Chrome or Edge.'
+      ? 'He listens through the microphone. For direct audio, open this page in '
+        + 'Chrome or Edge.'
     : IS_IOS
-      ? 'He listens through the microphone. Play the music on a speaker, a laptop or '
-        + 'another phone and hold this one near it. iPhone stops its own music when a '
-        + 'page starts listening, so this phone cannot be the one playing.'
-      : 'He listens through the microphone and dances to whatever is playing nearby, '
-        + 'including this phone\u2019s own speaker.';
+      ? 'Play music on a speaker or another device and hold this phone near it. '
+        + 'Music from this phone will not work.'
+      : 'He listens through the microphone and dances to whatever is playing nearby.';
 }
 
 
