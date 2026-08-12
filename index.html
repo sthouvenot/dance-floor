@@ -188,6 +188,29 @@
     border-radius:8px; padding:11px 14px 11px 46px; margin-left:-0px; }
   .steps li.warn::before { left:8px; top:10px; background:#F2643F; color:#fff; }
 
+  /* ── sensitivity slider (phones) ─────────────────────────────────────────
+     Every room is different, so the thresholds get a live control rather than
+     a tuned constant. Hidden by default; the phone block below reveals it. */
+  #sens { display:none; position:fixed; left:0; right:0; bottom:0; z-index:16;
+    padding:14px 20px calc(18px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, rgba(6,12,36,.92), rgba(6,12,36,0)); }
+  #sens .lbl { display:flex; justify-content:space-between; align-items:baseline;
+    font:800 9px/1 "Helvetica Neue",Arial,sans-serif; letter-spacing:.16em;
+    text-transform:uppercase; color:#8fa4d8; margin-bottom:9px; }
+  #sens .lbl i { font-style:normal; color:#FFCF00; letter-spacing:.08em; }
+  #sensRange { -webkit-appearance:none; appearance:none; width:100%; height:34px;
+    background:transparent; display:block; }
+  #sensRange::-webkit-slider-runnable-track { height:6px; border-radius:999px;
+    background:rgba(255,255,255,.18); }
+  #sensRange::-moz-range-track { height:6px; border-radius:999px;
+    background:rgba(255,255,255,.18); }
+  /* Thumb is deliberately large: this gets used in the dark, one handed. */
+  #sensRange::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+    width:30px; height:30px; border-radius:50%; background:#FFCF00; margin-top:-12px;
+    border:3px solid #12235B; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+  #sensRange::-moz-range-thumb { width:30px; height:30px; border-radius:50%;
+    background:#FFCF00; border:3px solid #12235B; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+
   @media (max-width:700px) {
     /* Phone is the solo view: him alone on flat dark. No scene art behind him,
        so there is no fact to caption. display:none also beats the inline
@@ -198,6 +221,7 @@
        button is the one control most likely to be hit by accident while
        someone is holding the phone up. */
     #corner { display:none; }
+    #sens { display:block; }
   }
 
 </style>
@@ -232,6 +256,12 @@
 <div id="corner">
   <button id="fsBtn">⛶ Full screen</button>
   <div id="status"><span class="sdot"></span><span id="statusText">disconnected</span></div>
+</div>
+
+<div id="sens">
+  <div class="lbl"><span>Sensitivity</span><i id="sensVal">standing by</i></div>
+  <input type="range" id="sensRange" min="0" max="100" value="50"
+         aria-label="Dance sensitivity">
 </div>
 
 <div class="overlay gone" id="share">
@@ -315,14 +345,15 @@ function cache(key, w, h, fn) {
 
 /* ═══════════════════════ state ═══════════════════════ */
 const S = {
-  started:false, mic:false, listen:null, sens:1.32,
+  started:false, mic:false, listen:null, sens:1.32, ease:0.5,
   t:0, dt:0, bpm:120, phase:0, beat:0,
   energy:0, bass:0, air:0, kick:0, flash:0,
   scene:0, factScene:-1, auto:true, sceneAt:0, sceneFade:1, busX:-0.06,
   lastBeat:-9, intervals:[], taps:[], parts:[], head:0,
   tint:null,
   sync:'clock', src:'clock', still:true, offset:0, grid:null, gridIdx:0, lastTempoBeat:-1, lastBpmSave:-9,
-  lastSignal:-9, hearSince:-9, wasHearing:false, locked:false, punch:0, srcLabel:'', rate:0, fps:0,
+  lastSignal:-9, hearSince:-9, wasHearing:false, locked:false, punch:0, lastSample:0,
+  srcLabel:'', rate:0, fps:0,
   dbg:{ flux:0, thresh:0, onsets:0, lastOnset:-9, scope:[], level:0 },
   sp:{ on:false, playing:false, id:null, p0:0, t0:0, dur:0, art:'' }
 };
@@ -342,23 +373,67 @@ const IMGS = HEADS.map(h => { const i = new Image(); i.src = HEAD_SRC[h.k] || ''
 let analyser = null, freq = null, prevSpec = null;
 const hist = [], fluxHist = [];
 
+let audioCtx = null, curStream = null;
+
+/* Changing the audio route — speaker to phone earpiece, headphones in or out,
+   a Bluetooth device connecting — tears this down in ways that are silent from
+   here. The OS suspends the AudioContext, and on phones it often ends or mutes
+   the track outright. Nothing noticed, so he simply stopped dancing and stayed
+   stopped. Watch for all of it and rebuild the capture when it happens. */
 function attach(stream, label) {
   const AC = window.AudioContext || window.webkitAudioContext;
-  const ac = new AC();
+  // Reuse one context. Each attach() used to make another, and browsers cap
+  // how many a page may hold, so re-attaching enough times stopped working.
+  if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AC();
+  const ac = audioCtx;
   S.rate = ac.sampleRate;
   const tr = stream.getAudioTracks()[0];
   S.srcLabel = label || (tr && tr.label) || 'audio';
   ac.resume();
+
+  if (curStream && curStream !== stream) {
+    try { curStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  }
+  curStream = stream;
+
   ac.createMediaStreamSource(stream).connect(analyser = ac.createAnalyser());
   analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.48;
   freq = new Uint8Array(analyser.frequencyBinCount);
   S.mic = true;
+  S.lastSample = S.t;                        // give the new stream a clean window
+  resync();                                  // old beat history belongs to the old route
+
+  if (tr) {
+    tr.addEventListener('ended', () => recapture('track ended'));
+    tr.addEventListener('mute', () => recapture('track muted'));
+  }
+}
+
+/* Rebuild the microphone capture after the route changed under us. Only ever
+   re-opens the microphone: the share-picker route cannot be reopened without a
+   fresh user gesture, so there it just reports the loss instead of failing. */
+let recapturing = false;
+async function recapture(why) {
+  if (recapturing || !S.started) return;
+  if (S.listen !== 'mic') return;            // cannot silently reopen a screen share
+  recapturing = true;
+  try {
+    if (audioCtx && audioCtx.state === 'suspended') { try { await audioCtx.resume(); } catch (e) {} }
+    const s = await navigator.mediaDevices.getUserMedia({
+      audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+    attach(s, 'mic');
+  } catch (e) {
+    // Leave him breathing rather than frozen mid-pose; the next tap can retry.
+  } finally {
+    recapturing = false;
+  }
 }
 
 async function startMic() {
-  attach(await navigator.mediaDevices.getUserMedia({
-    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } }));
-  S.listen = 'mic';
+  const s = await navigator.mediaDevices.getUserMedia({
+    audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } });
+  S.listen = 'mic';        // set first: attach() wires recovery that checks this
+  attach(s);
 }
 
 /* Names Windows/macOS give to a loopback input — an input wired to what the machine
@@ -446,7 +521,22 @@ function beatQuality() {
    So require both a steady spacing and a real punch, each with hysteresis.
    Getting started should take convincing, but once he is dancing a momentary dip
    — a breakdown, someone talking over the speaker — must not freeze him. */
-const GROOVE_ON = 0.55, GROOVE_OFF = 0.28, PUNCH_ON = 1.45;
+/* These were tuned against synthetic clips. A real room is louder, boomier and
+   more reflective than any of them, so S.ease (0..1, from the slider) slides the
+   whole set between strict and generous. 0.5 is where the tuning landed; drag up
+   if he stands still through music, down if he dances to the room. */
+const GATES = {
+  //              strict        generous
+  grooveOn:  [0.72, 0.30],
+  grooveOff: [0.44, 0.10],
+  punchOn:   [1.90, 1.12],
+  holdGap:   [1.90, 4.00]        // seconds of silence before he gives up
+};
+const gate = k => {
+  const [a, b] = GATES[k];
+  return a + (b - a) * S.ease;
+};
+
 function grooving() {
   if (!hearing()) { S.locked = false; return false; }
   const q = beatQuality();
@@ -456,10 +546,10 @@ function grooving() {
     // which is inside the range steady noise reaches, so releasing on it would
     // freeze him during the quiet part of a song. Let the beat spacing and a
     // roughly bar-long silence decide when the music has actually stopped.
-    if (q < GROOVE_OFF || gap > 2.6) S.locked = false;
+    if (q < gate('grooveOff') || gap > gate('holdGap')) S.locked = false;
   } else {
     // Starting is the strict end: it takes a real transient, not just regularity.
-    if (q > GROOVE_ON && S.punch > PUNCH_ON && gap < 2.0) S.locked = true;
+    if (q > gate('grooveOn') && S.punch > gate('punchOn') && gap < 2.0) S.locked = true;
   }
   return S.locked;
 }
@@ -477,6 +567,7 @@ function readAudio() {
   S.bass += (b - S.bass) * 0.35;
   S.air += (a - S.air) * 0.25;
   S.energy += (Math.min(1, all * 2.4) - S.energy) * 0.12;
+  S.dbg.level = all;                    // raw, unsmoothed: 0 only on a dead stream
   hist.push(b); if (hist.length > 45) hist.shift();
 
   // ── onset detection by spectral flux: catches kicks, snares and hats rather than
@@ -495,7 +586,9 @@ function readAudio() {
   const sd = Math.sqrt(vari / fluxHist.length);
 
   S.dbg.flux = flux;
-  S.dbg.thresh = mean + sd * (S.sens - 0.35);
+  // The slider also opens up onset detection itself, so a quiet or distant
+  // speaker registers hits at all rather than only loosening the gates above.
+  S.dbg.thresh = mean + sd * ((S.sens * (1.6 - S.ease * 0.8)) - 0.35);
   if (all > 0.005) S.lastSignal = S.t;               // something is actually audible
   S.dbg.scope.push(flux); if (S.dbg.scope.length > 200) S.dbg.scope.shift();
 
@@ -2382,9 +2475,35 @@ function resync() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { prev = performance.now(); resync(); }
+  if (!document.hidden) {
+    prev = performance.now(); resync();
+    // Coming back from the lock screen or another app usually left the context
+    // suspended, which reads exactly like silence.
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  }
 });
 window.addEventListener('focus', () => { prev = performance.now(); });
+
+/* Not every route change fires an event. A track can stay live and simply stop
+   delivering samples, which looks identical to a quiet room, so poll for a
+   stream that has gone completely flat and rebuild it. */
+function watchAudio() {
+  if (!analyser || !S.started || S.listen !== 'mic') { S.lastSample = S.t; return; }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+  const tr = curStream && curStream.getAudioTracks()[0];
+  const bad = !tr || tr.readyState === 'ended' || tr.muted;
+  // A single silent frame proves nothing: the gap between two kicks can be
+  // digital silence. Only a stream that has not produced one non-zero frame for
+  // the whole window is actually dead.
+  if (S.dbg.level > 0) S.lastSample = S.t;
+  const flat = S.t - S.lastSample > 2.5;
+  if (bad || flat) {
+    S.lastSample = S.t;                      // don't re-fire while the retry runs
+    recapture(bad ? 'track dead' : 'stream went flat');
+  }
+}
 
 function setFact() {
   const box = el('fact'), t = el('factText');
@@ -2445,7 +2564,9 @@ function frame(now) {
   S.busX += S.dt * (0.008 + S.kick * 0.185);        // always forward, lunges on the hit
   if (S.busX > 1.18) S.busX = -0.42;
   stepParts(S.dt);
+  watchAudio();
   drawDebug();
+  if (SOLO) sensLabel();
 
   if (S.factScene !== S.scene) { S.factScene = S.scene; setFact(); }
   if (S.auto && S.t - S.sceneAt > 10) nextScene(1);
@@ -2817,6 +2938,33 @@ const fsLabel = () => {
 };
 document.addEventListener('fullscreenchange', fsLabel);
 document.addEventListener('webkitfullscreenchange', fsLabel);
+
+
+/* ── sensitivity slider ───────────────────────────────────────────────────
+   Rooms vary more than any tuning can cover, so this is the escape hatch.
+   The readout names what he is doing right now rather than showing a number,
+   which is the only feedback that means anything while the music is playing. */
+const sensRange = el('sensRange'), sensVal = el('sensVal');
+try {
+  const saved = localStorage.getItem('mdf.ease');
+  if (saved !== null) { S.ease = Math.max(0, Math.min(1, parseFloat(saved) || 0)); }
+} catch (e) {}
+sensRange.value = String(Math.round(S.ease * 100));
+
+sensRange.addEventListener('input', () => {
+  S.ease = sensRange.value / 100;
+  try { localStorage.setItem('mdf.ease', String(S.ease)); } catch (e) {}
+});
+
+// Say what he is doing, not what the number is.
+let sensNote = '';
+function sensLabel() {
+  const t = !analyser ? 'no audio yet'
+          : !hearing() ? 'hearing nothing'
+          : S.locked   ? 'dancing'
+          : 'waiting for a beat';
+  if (t !== sensNote) { sensNote = t; sensVal.textContent = t; }
+}
 
 setFact();
 window.__attach = attach;   // test hook
