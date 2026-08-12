@@ -118,7 +118,18 @@
     letter-spacing:.06em; color:#7e93c9; max-width:34em; text-transform:uppercase; }
   .pphoto { flex:none; width:clamp(150px,26vw,360px); }
   .pphoto img { width:100%; display:block; filter:drop-shadow(9px 12px 0 rgba(242,100,63,.7)); }
-  @media (max-width:760px) { .pphoto { display:none; } .poster { justify-content:center; } }
+  @media (max-width:760px) {
+    .poster { flex-direction:column; align-items:center; text-align:center; gap:6px; }
+    .ptext { width:100%; }
+    .pphoto { width:min(150px,34vw); order:-1; }
+    .pphoto img { filter:drop-shadow(6px 8px 0 rgba(242,100,63,.7)); }
+    .big { font-size:clamp(38px,13vw,64px); }
+    .rule { margin:14px auto 12px; width:64%; }
+    .psub { margin-left:auto; margin-right:auto; }
+    .choices { justify-content:center; }
+    .choice { text-align:center; flex:1 1 100%; }
+    .pnote { margin-left:auto; margin-right:auto; }
+  }
 
 
   #dbg { position:fixed; left:14px; top:14px; z-index:20; display:none;
@@ -144,21 +155,20 @@
   #fact .fl { font:900 10.5px/1 "Helvetica Neue",Arial,sans-serif; letter-spacing:.24em;
     text-transform:uppercase; color:#FFCF00; margin-bottom:7px; }
   #fact .ft { font:600 14px/1.45 "Helvetica Neue",Arial,sans-serif; color:#eaf0ff; }
-  @media (max-width:700px) { #fact { display:none; } }
 
   #corner { position:fixed; right:18px; bottom:16px; z-index:14;
     display:flex; align-items:center; gap:10px; }
   #fsBtn { cursor:pointer; border:1px solid rgba(255,255,255,.14); border-radius:999px;
     background:rgba(9,13,30,.78); backdrop-filter:blur(12px); color:#cfd8ee;
-    font:800 11px/1 "Helvetica Neue",Arial,sans-serif; letter-spacing:.16em;
-    text-transform:uppercase; padding:9px 15px; }
+    font:800 9px/1 "Helvetica Neue",Arial,sans-serif; letter-spacing:.13em;
+    text-transform:uppercase; padding:7px 11px; }
   #fsBtn:hover { color:#fff; border-color:rgba(255,255,255,.35); }
-  #status { display:flex; align-items:center; gap:9px; padding:8px 15px; border-radius:999px;
+  #status { display:flex; align-items:center; gap:7px; padding:7px 12px; border-radius:999px;
     background:rgba(9,13,30,.78); backdrop-filter:blur(12px);
-    border:1px solid rgba(255,255,255,.14); font:800 11px/1 "Helvetica Neue",Arial,sans-serif;
-    letter-spacing:.16em; text-transform:uppercase; color:#9df3c4; pointer-events:none; }
-  #status .sdot { width:8px; height:8px; border-radius:50%; background:#3ddc84;
-    box-shadow:0 0 10px #3ddc84; }
+    border:1px solid rgba(255,255,255,.14); font:800 9px/1 "Helvetica Neue",Arial,sans-serif;
+    letter-spacing:.13em; text-transform:uppercase; color:#9df3c4; pointer-events:none; }
+  #status .sdot { width:6px; height:6px; border-radius:50%; background:#3ddc84;
+    box-shadow:0 0 8px #3ddc84; }
   #status.warn { color:#ffcf7a; border-color:rgba(255,180,0,.4); }
   #status.warn .sdot { background:#ffb02e; box-shadow:0 0 10px #ffb02e; }
 
@@ -173,6 +183,14 @@
     border-radius:8px; padding:11px 14px 11px 46px; margin-left:-0px; }
   .steps li.warn::before { left:8px; top:10px; background:#F2643F; color:#fff; }
 
+  @media (max-width:700px) {
+    #fact { left:10px; right:10px; bottom:10px; width:auto; max-width:none;
+      padding:9px 12px 10px; border-left-width:4px; }
+    #fact .fl { font-size:9px; letter-spacing:.2em; margin-bottom:5px; }
+    #fact .ft { font-size:11.5px; line-height:1.4; }
+    #corner { right:10px; left:auto; bottom:auto; top:10px; }
+  }
+
 </style>
 </head>
 <body>
@@ -183,15 +201,15 @@
     <div class="ptext">
       <h1 class="big">Mamdani<br>Dance<br>Floor</h1>
       <div class="rule"></div>
-      <p class="psub">He dances to your music. Where is it playing?</p>
+      <p class="psub" id="psub">He wants to dance. He just needs to hear the music.</p>
       <div class="choices">
         <button class="choice" id="optComputer">
-          <span class="ch">On this computer</span>
-          <span class="cs">Reads the sound directly. No microphone.</span>
+          <span class="ch">Use this computer's sound</span>
+          <span class="cs">Reads the audio directly. No microphone.</span>
         </button>
         <button class="choice" id="optMic">
-          <span class="ch">Somewhere in the room</span>
-          <span class="cs">Listens through the microphone.</span>
+          <span class="ch">Use the microphone</span>
+          <span class="cs">Picks up whatever is playing in the room.</span>
         </button>
       </div>
       <p class="pnote">Audio stays in your browser. Nothing is recorded.</p>
@@ -253,14 +271,23 @@ if (window.opener && /[?&](code|error)=/.test(location.search)) {
 
 /* ═══════════════════════ canvas ═══════════════════════ */
 const cv = document.getElementById('stage'), ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1;
+let W = 0, H = 0, DPR = 1, VW = 0, VH = 0, offY = 0;
 const caches = {};
+
+/* The scenes are built wide. On a phone the viewport is far taller than it is
+   broad, so rather than squeezing everything into that shape we draw the show
+   into a letterboxed band across the middle and leave the rest dark. */
+const MAXR = 0.72;                       // tallest the stage is ever allowed to get
 
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1);
-  W = window.innerWidth; H = window.innerHeight;
-  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  VW = window.innerWidth; VH = window.innerHeight;
+  cv.width = Math.round(VW * DPR); cv.height = Math.round(VH * DPR);
+  W = VW; H = Math.min(VH, Math.round(VW * MAXR));
+  offY = Math.round((VH - H) / 2);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, offY * DPR);
+  document.body.classList.toggle('boxed', offY > 6);
+  document.documentElement.style.setProperty('--band', offY + 'px');
   for (const k in caches) delete caches[k];
 }
 window.addEventListener('resize', resize);
@@ -1773,10 +1800,11 @@ function drawSpectrum() {
 
   // A plain analyser hanging off the top edge: vertical bars, packed tight enough to
   // overlap, bass in the middle and the top end running out to both corners.
-  const N = 122;                                // per side
+  const small = W < 720;                        // phone: fewer, fatter, taller bars
+  const N = small ? 52 : 122;                   // per side
   const cx = W / 2;
-  const maxL = Math.min(H * 0.087, W * 0.058);
-  const minL = Math.min(H * 0.009, W * 0.006);
+  const maxL = small ? H * 0.20 : Math.min(H * 0.087, W * 0.058);
+  const minL = small ? H * 0.016 : Math.min(H * 0.009, W * 0.006);
   const pal0 = pal(1), pal1 = pal(0);
 
   // ── band levels, log-spaced, edges walked forward so none share a bin ──
@@ -2345,7 +2373,13 @@ function frame(now) {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, W, H);
+  ctx.save();                                  // wipe the full surface, bars included
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, VW, VH);
+  if (offY > 0) { ctx.fillStyle = '#05070f'; ctx.fillRect(0, 0, VW, VH); }
+  ctx.restore();
+  ctx.save();                                  // nothing escapes the stage
+  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
   pushBeatCam();
   SC().draw();
   drawSpectrum();
@@ -2361,6 +2395,7 @@ function draw() {
   const g = ctx.createRadialGradient(W / 2, H * 0.5, H * 0.28, W / 2, H * 0.5, H * 0.88);
   g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.42)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.restore();
 }
 
 /* ═══════════════════════ ui ═══════════════════════ */
@@ -2397,9 +2432,10 @@ const noSystemAudio = !navigator.mediaDevices || !navigator.mediaDevices.getDisp
   || (navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches);
 if (noSystemAudio) {
   el('optComputer').style.display = 'none';
-  el('optMic').classList.add('alt');
+  el('psub').textContent = 'He wants to dance. Let him hear the music.';
+  el('optMic').querySelector('.ch').textContent = 'Start the music';
   el('optMic').querySelector('.cs').textContent =
-    'Listens through the microphone. On a phone this is the only option.';
+    'He listens through the microphone and dances to whatever is playing nearby, including this phone\u2019s own speaker.';
 }
 
 
@@ -2514,13 +2550,26 @@ window.addEventListener('keydown', e => {
   if (e.key.toLowerCase() === 'd') dbgOn = !dbgOn;
 });
 
-const goFull = () => document.fullscreenElement
-  ? document.exitFullscreen()
-  : document.documentElement.requestFullscreen().catch(() => {});
+const root = document.documentElement;
+const canFull = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+const isFull = () => document.fullscreenElement || document.webkitFullscreenElement;
+const goFull = () => {
+  try {
+    if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else {
+      const r = root.requestFullscreen || root.webkitRequestFullscreen;
+      const out = r.call(root);
+      if (out && out.catch) out.catch(() => {});
+    }
+  } catch (e) {}
+};
+if (!canFull) el('fsBtn').style.display = 'none';   // iPhone Safari has no full screen
 el('fsBtn').addEventListener('click', goFull);
-document.addEventListener('fullscreenchange', () => {
-  el('fsBtn').textContent = document.fullscreenElement ? '⛶ Exit full screen' : '⛶ Full screen';
-});
+const fsLabel = () => {
+  el('fsBtn').textContent = isFull() ? '⛶ Exit full screen' : '⛶ Full screen';
+};
+document.addEventListener('fullscreenchange', fsLabel);
+document.addEventListener('webkitfullscreenchange', fsLabel);
 
 setFact();
 window.__attach = attach;   // test hook
